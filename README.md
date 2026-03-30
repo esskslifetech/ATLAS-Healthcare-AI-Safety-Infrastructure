@@ -117,7 +117,7 @@ node -r ts-node/register src/demo/api-demo.ts
 
 ### 🏆 It's infrastructure, not an app
 
-Judges see chatbots all day. ATLAS is different:
+People see chatbots all day. ATLAS is different:
 
 > "We built the safety layer that ANY healthcare AI needs"
 
