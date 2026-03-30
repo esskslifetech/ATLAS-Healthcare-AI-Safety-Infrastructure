@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 // a2a-protocol.ts
 // ATLAS A2A Protocol – Agent-to-Agent Communication using SHARP Extension Specs
 
@@ -79,6 +80,12 @@ export interface A2AHooks {
 class NoopHooks implements A2AHooks {}
 
 // ==================== Schemas ====================
+=======
+// ATLAS A2A Protocol - Agent-to-Agent Communication using SHARP Extension Specs
+import { z } from 'zod';
+
+// ==================== SHARP Protocol Schemas ====================
+>>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
 export const A2AMessageSchema = z.object({
   messageId: z.string(),
   timestamp: z.string(),
@@ -89,10 +96,17 @@ export const A2AMessageSchema = z.object({
   sessionId: z.string(),
   patientId: z.string(),
   payload: z.record(z.any()),
+<<<<<<< HEAD
   signature: z.string().optional(),
   priority: z.enum(['LOW', 'NORMAL', 'HIGH', 'URGENT']).default('NORMAL'),
   requiresResponse: z.boolean().default(false),
   correlationId: z.string().optional(),
+=======
+  signature: z.string().optional(), // For message integrity
+  priority: z.enum(['LOW', 'NORMAL', 'HIGH', 'URGENT']).default('NORMAL'),
+  requiresResponse: z.boolean().default(false),
+  correlationId: z.string().optional(), // For request-response correlation
+>>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
 });
 
 export const HandoffSchema = z.object({
@@ -130,6 +144,7 @@ export type A2AMessage = z.infer<typeof A2AMessageSchema>;
 export type Handoff = z.infer<typeof HandoffSchema>;
 export type AgentCapability = z.infer<typeof AgentCapabilitySchema>;
 
+<<<<<<< HEAD
 // ==================== Metrics ====================
 interface MetricsSnapshot {
   agentCount: number;
@@ -323,10 +338,14 @@ class AgentCapabilitiesCache {
 }
 
 // ==================== A2A Protocol Manager ====================
+=======
+// ==================== A2A Protocol Implementation ====================
+>>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
 export class A2AProtocolManager {
   private agents = new Map<string, AgentCapability>();
   private messageHandlers = new Map<string, (message: A2AMessage) => Promise<A2AMessage | void>>();
   private activeHandoffs = new Map<string, Handoff>();
+<<<<<<< HEAD
   private config: A2AConfig;
   private metrics: MetricsCollector;
   private logger: EventLogger;
@@ -350,10 +369,15 @@ export class A2AProtocolManager {
       () => this.getActiveAgents(),
       () => this.getActiveHandoffs()
     );
+=======
+
+  constructor() {
+>>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
     this.initializeDefaultAgents();
   }
 
   // ==================== Agent Registration ====================
+<<<<<<< HEAD
   async registerAgent(capability: AgentCapability): Promise<Result<void>> {
     const span = this.tracer.startSpan('a2a.registerAgent');
     try {
@@ -413,6 +437,16 @@ export class A2AProtocolManager {
       span.end();
       return { ok: false, error };
     }
+=======
+  registerAgent(capability: AgentCapability): void {
+    this.agents.set(capability.agentId, capability);
+    console.log(`Agent registered: ${capability.agentId} (${capability.agentType})`);
+  }
+
+  unregisterAgent(agentId: string): void {
+    this.agents.delete(agentId);
+    console.log(`Agent unregistered: ${agentId}`);
+>>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
   }
 
   getActiveAgents(): AgentCapability[] {
@@ -422,12 +456,17 @@ export class A2AProtocolManager {
   }
 
   findAgentsByCapability(capability: string): AgentCapability[] {
+<<<<<<< HEAD
     return this.getActiveAgents().filter(agent =>
+=======
+    return this.getActiveAgents().filter(agent => 
+>>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
       agent.capabilities.includes(capability)
     );
   }
 
   // ==================== Message Handling ====================
+<<<<<<< HEAD
   async registerMessageHandler(
     agentId: string,
     handler: (message: A2AMessage) => Promise<A2AMessage | void>
@@ -766,6 +805,151 @@ export class A2AProtocolManager {
       span.end();
       return { ok: false, error };
     }
+=======
+  registerMessageHandler(agentId: string, handler: (message: A2AMessage) => Promise<A2AMessage | void>): void {
+    this.messageHandlers.set(agentId, handler);
+  }
+
+  async sendMessage(message: A2AMessage): Promise<A2AMessage | null> {
+    const targetAgent = this.agents.get(message.toAgent);
+    
+    if (!targetAgent) {
+      throw new Error(`Target agent not found: ${message.toAgent}`);
+    }
+
+    if (targetAgent.status !== 'ACTIVE') {
+      throw new Error(`Target agent not active: ${message.toAgent} (${targetAgent.status})`);
+    }
+
+    // Validate message
+    const validatedMessage = A2AMessageSchema.parse(message);
+
+    // Add signature in production
+    validatedMessage.signature = this.generateSignature(validatedMessage);
+
+    console.log(`Sending message: ${message.fromAgent} -> ${message.toAgent} (${message.messageType})`);
+
+    // Route to target agent
+    const handler = this.messageHandlers.get(message.toAgent);
+    if (handler) {
+      try {
+        const response = await handler(validatedMessage);
+        return response;
+      } catch (error) {
+        console.error(`Message handling failed for ${message.toAgent}:`, error);
+        return null;
+      }
+    }
+
+    // If no handler, treat as delivered
+    return null;
+  }
+
+  async broadcastMessage(fromAgent: string, messageType: string, payload: any, priority = 'NORMAL'): Promise<void> {
+    const activeAgents = this.getActiveAgents().filter(agent => agent.agentId !== fromAgent);
+    
+    const promises = activeAgents.map(agent => 
+      this.sendMessage({
+        messageId: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        timestamp: new Date().toISOString(),
+        fromAgent,
+        toAgent: agent.agentId,
+        messageType: messageType as any,
+        sessionId: 'broadcast',
+        patientId: 'system',
+        payload,
+        priority: priority as any,
+        requiresResponse: false,
+      })
+    );
+
+    await Promise.allSettled(promises);
+  }
+
+  // ==================== Handoff Management ====================
+  async initiateHandoff(handoff: Handoff): Promise<Handoff> {
+    const validatedHandoff = HandoffSchema.parse(handoff);
+    validatedHandoff.status = 'PENDING';
+    validatedHandoff.timeline.requested = new Date().toISOString();
+
+    this.activeHandoffs.set(validatedHandoff.handoffId, validatedHandoff);
+
+    // Send handoff request to target agent
+    const handoffMessage: A2AMessage = {
+      messageId: `handoff_${validatedHandoff.handoffId}`,
+      timestamp: new Date().toISOString(),
+      fromAgent: validatedHandoff.fromAgent,
+      toAgent: validatedHandoff.toAgent,
+      messageType: 'HANDOFF',
+      sessionId: validatedHandoff.sessionId,
+      patientId: validatedHandoff.patientId,
+      payload: {
+        handoffType: validatedHandoff.handoffType,
+        context: validatedHandoff.context,
+        urgency: validatedHandoff.urgency,
+        requiredCapabilities: validatedHandoff.requiredCapabilities,
+      },
+      priority: validatedHandoff.urgency === 'EMERGENT' ? 'URGENT' : 'NORMAL',
+      requiresResponse: true,
+    };
+
+    await this.sendMessage(handoffMessage);
+    return validatedHandoff;
+  }
+
+  async acceptHandoff(handoffId: string, acceptingAgent: string): Promise<Handoff> {
+    const handoff = this.activeHandoffs.get(handoffId);
+    if (!handoff) {
+      throw new Error(`Handoff not found: ${handoffId}`);
+    }
+
+    if (handoff.toAgent !== acceptingAgent) {
+      throw new Error(`Agent ${acceptingAgent} not authorized to accept handoff ${handoffId}`);
+    }
+
+    handoff.status = 'ACCEPTED';
+    handoff.timeline.accepted = new Date().toISOString();
+
+    // Send acceptance notification
+    await this.sendMessage({
+      messageId: `accept_${handoffId}`,
+      timestamp: new Date().toISOString(),
+      fromAgent: acceptingAgent,
+      toAgent: handoff.fromAgent,
+      messageType: 'RESPONSE',
+      sessionId: handoff.sessionId,
+      patientId: handoff.patientId,
+      payload: { handoffId, status: 'ACCEPTED' },
+      correlationId: `handoff_${handoffId}`,
+    });
+
+    return handoff;
+  }
+
+  async completeHandoff(handoffId: string, result: any): Promise<Handoff> {
+    const handoff = this.activeHandoffs.get(handoffId);
+    if (!handoff) {
+      throw new Error(`Handoff not found: ${handoffId}`);
+    }
+
+    handoff.status = 'COMPLETED';
+    handoff.timeline.completed = new Date().toISOString();
+
+    // Send completion notification
+    await this.sendMessage({
+      messageId: `complete_${handoffId}`,
+      timestamp: new Date().toISOString(),
+      fromAgent: handoff.toAgent,
+      toAgent: handoff.fromAgent,
+      messageType: 'RESPONSE',
+      sessionId: handoff.sessionId,
+      patientId: handoff.patientId,
+      payload: { handoffId, status: 'COMPLETED', result },
+      correlationId: `handoff_${handoffId}`,
+    });
+
+    return handoff;
+>>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
   }
 
   getActiveHandoffs(): Handoff[] {
@@ -773,6 +957,7 @@ export class A2AProtocolManager {
       .filter(handoff => ['PENDING', 'ACCEPTED', 'IN_PROGRESS'].includes(handoff.status));
   }
 
+<<<<<<< HEAD
   private getActiveHandoffsCount(): number {
     let count = 0;
     for (const handoff of this.activeHandoffs.values()) {
@@ -781,11 +966,14 @@ export class A2AProtocolManager {
     return count;
   }
 
+=======
+>>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
   // ==================== Agent Discovery ====================
   async discoverAgents(criteria: {
     agentType?: string;
     capability?: string;
     fhirResource?: string;
+<<<<<<< HEAD
   }): Promise<Result<AgentCapability[]>> {
     const span = this.tracer.startSpan('a2a.discoverAgents');
     try {
@@ -836,12 +1024,44 @@ export class A2AProtocolManager {
   }
 
   getStaleAgents(timeoutMinutes: number = this.config.heartbeatTimeoutMinutes): AgentCapability[] {
+=======
+  }): Promise<AgentCapability[]> {
+    let agents = this.getActiveAgents();
+
+    if (criteria.agentType) {
+      agents = agents.filter(agent => agent.agentType === criteria.agentType);
+    }
+
+    if (criteria.capability) {
+      agents = agents.filter(agent => agent.capabilities.includes(criteria.capability!));
+    }
+
+    if (criteria.fhirResource) {
+      agents = agents.filter(agent => 
+        agent.fhirResources?.includes(criteria.fhirResource!)
+      );
+    }
+
+    return agents;
+  }
+
+  // ==================== Health Monitoring ====================
+  updateHeartbeat(agentId: string): void {
+    const agent = this.agents.get(agentId);
+    if (agent) {
+      agent.lastHeartbeat = new Date().toISOString();
+    }
+  }
+
+  getStaleAgents(timeoutMinutes = 5): AgentCapability[] {
+>>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
     const cutoff = new Date(Date.now() - timeoutMinutes * 60 * 1000);
     return Array.from(this.agents.values())
       .filter(agent => new Date(agent.lastHeartbeat) < cutoff)
       .filter(agent => agent.status === 'ACTIVE');
   }
 
+<<<<<<< HEAD
   // ==================== Observability ====================
   getMetrics(moduleId?: string): MetricsSnapshot | Map<string, MetricsSnapshot> {
     return this.metrics.getMetrics(moduleId);
@@ -916,16 +1136,73 @@ export class A2AProtocolManager {
 
     defaultAgents.forEach(agent => {
       this.registerAgent(agent).catch(console.error);
+=======
+  // ==================== Private Methods ====================
+  private initializeDefaultAgents(): void {
+    // Register default ATLAS agents
+    this.registerAgent({
+      agentId: 'atlas-agent-coordinator',
+      agentType: 'COORDINATOR',
+      capabilities: ['WORKFLOW_ORCHESTRATION', 'CARE_COORDINATION', 'SESSION_MANAGEMENT'],
+      supportedMessageTypes: ['REQUEST', 'RESPONSE', 'NOTIFICATION', 'HANDOFF'],
+      fhirResources: ['Patient', 'Encounter', 'ServiceRequest'],
+      status: 'ACTIVE',
+      lastHeartbeat: new Date().toISOString(),
+    });
+
+    this.registerAgent({
+      agentId: 'atlas-agent-triage',
+      agentType: 'TRIAGE',
+      capabilities: ['SYMPTOM_ANALYSIS', 'URGENCY_ASSESSMENT', 'DIFFERENTIAL_DIAGNOSIS'],
+      supportedMessageTypes: ['REQUEST', 'RESPONSE'],
+      fhirResources: ['Patient', 'Observation', 'Condition'],
+      status: 'ACTIVE',
+      lastHeartbeat: new Date().toISOString(),
+    });
+
+    this.registerAgent({
+      agentId: 'atlas-agent-referral',
+      agentType: 'REFERRAL',
+      capabilities: ['SPECIALIST_MATCHING', 'APPOINTMENT_SCHEDULING', 'FACILITY_SELECTION'],
+      supportedMessageTypes: ['REQUEST', 'RESPONSE'],
+      fhirResources: ['ServiceRequest', 'HealthcareService', 'Location'],
+      status: 'ACTIVE',
+      lastHeartbeat: new Date().toISOString(),
+    });
+
+    this.registerAgent({
+      agentId: 'atlas-agent-meds',
+      agentType: 'MEDICATION',
+      capabilities: ['MEDICATION_REVIEW', 'INTERACTION_CHECKING', 'CONTRAINDICATION_ASSESSMENT'],
+      supportedMessageTypes: ['REQUEST', 'RESPONSE'],
+      fhirResources: ['MedicationRequest', 'Medication', 'AllergyIntolerance'],
+      status: 'ACTIVE',
+      lastHeartbeat: new Date().toISOString(),
+    });
+
+    this.registerAgent({
+      agentId: 'atlas-agent-proxy',
+      agentType: 'NOTIFICATION',
+      capabilities: ['PATIENT_NOTIFICATION', 'PROVIDER_ALERTING', 'INSTRUCTION_DELIVERY'],
+      supportedMessageTypes: ['REQUEST', 'RESPONSE', 'NOTIFICATION'],
+      status: 'ACTIVE',
+      lastHeartbeat: new Date().toISOString(),
+>>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
     });
   }
 
   private generateSignature(message: A2AMessage): string {
+<<<<<<< HEAD
     // Simplified signature; in production, use crypto with a secret key
+=======
+    // In production, this would use real cryptographic signing
+>>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
     const data = JSON.stringify(message);
     return `signed_${Buffer.from(data).toString('base64').slice(0, 16)}`;
   }
 }
 
+<<<<<<< HEAD
 // ==================== SHARP Integration ====================
 export class SHARPIntegration {
   constructor(private a2aManager: A2AProtocolManager) {}
@@ -1007,11 +1284,18 @@ export class SHARPIntegration {
 }
 
 // ==================== Legacy SHARP Extension Adapter ====================
+=======
+// ==================== SHARP Extension Integration ====================
+>>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
 export class SHARPExtensionAdapter {
   constructor(private a2aManager: A2AProtocolManager) {}
 
   // Convert SHARP handoff requests to A2A protocol
+<<<<<<< HEAD
   async handleSHARPHandoff(sharpRequest: any): Promise<Result<Handoff>> {
+=======
+  async handleSHARPHandoff(sharpRequest: any): Promise<Handoff> {
+>>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
     const handoff: Handoff = {
       handoffId: sharpRequest.handoffId || `sharp_${Date.now()}`,
       fromAgent: sharpRequest.fromAgent || 'sharp-system',
@@ -1026,12 +1310,21 @@ export class SHARPExtensionAdapter {
       },
       status: 'PENDING',
     };
+<<<<<<< HEAD
     return this.a2aManager.initiateHandoff(handoff);
+=======
+
+    return await this.a2aManager.initiateHandoff(handoff);
+>>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
   }
 
   // Export A2A capabilities in SHARP format
   exportSHARPCapabilities(): any {
     const agents = this.a2aManager.getActiveAgents();
+<<<<<<< HEAD
+=======
+    
+>>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
     return {
       specification: 'SHARP-Extension-Specs/v1.0',
       agents: agents.map(agent => ({
@@ -1046,6 +1339,7 @@ export class SHARPExtensionAdapter {
   }
 }
 
+<<<<<<< HEAD
 // ==================== Factory ====================
 export function createA2AProtocolManager(
   config?: Partial<A2AConfig>,
@@ -1053,3 +1347,7 @@ export function createA2AProtocolManager(
 ): A2AProtocolManager {
   return new A2AProtocolManager(config, hooks);
 }
+=======
+// ==================== Exports ====================
+export type { A2AMessage, Handoff, AgentCapability };
+>>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)

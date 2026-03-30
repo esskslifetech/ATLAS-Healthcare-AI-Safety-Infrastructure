@@ -64,6 +64,11 @@
     "packages/atlas-tool-audit",
     "packages/atlas-agent-coordinator",
     "packages/atlas-agent-triage",
+<<<<<<< HEAD
+=======
+    "packages/atlas-agent-referral",
+    "packages/atlas-agent-meds",
+>>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
     "packages/atlas-agent-proxy"
   ]
 }

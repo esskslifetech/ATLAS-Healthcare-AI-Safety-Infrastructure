@@ -1,0 +1,37 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "lib": ["ES2020"],
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "composite": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "node",
+    "allowSyntheticDefaultImports": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  },
+  "include": [],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "**/*.test.ts"
+  ],
+  "references": [
+    { "path": "./packages/atlas-std-fhir" },
+    { "path": "./packages/atlas-tool-consent" },
+    { "path": "./packages/atlas-tool-identity" },
+    { "path": "./packages/atlas-tool-audit" },
+    { "path": "./packages/atlas-agent-coordinator" },
+    { "path": "./packages/atlas-agent-triage" },
+    { "path": "./packages/atlas-agent-proxy" }
+  ]
+}
