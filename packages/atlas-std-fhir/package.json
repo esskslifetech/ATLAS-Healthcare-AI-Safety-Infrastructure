@@ -1,0 +1,27 @@
+{
+  "name": "@atlas-std/fhir",
+  "version": "1.0.0",
+  "description": "ATLAS FHIR R4 Connector - Universal adapter for HL7 FHIR R4 resources",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest"
+  },
+  "dependencies": {
+    "fhirclient": "^2.5.2",
+    "zod": "^3.22.4",
+    "axios": "^1.6.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.2",
+    "jest": "^29.7.0",
+    "@types/jest": "^29.5.8",
+    "ts-jest": "^29.1.1"
+  },
+  "peerDependencies": {
+    "@atlas-tool/audit": "^1.0.0",
+    "@atlas-tool/identity": "^1.0.0"
+  }
+}
