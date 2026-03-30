@@ -4,7 +4,7 @@
 
 ---
 
-## ⚡ Problem Pitch
+## ⚡ Pitch
 
 ATLAS is a safety layer for healthcare AI that ensures every decision is:
 
@@ -16,7 +16,7 @@ Think: **Stripe for healthcare AI safety.**
 
 ---
 
-## The Problem (30 seconds)
+## The Problem
 
 Healthcare AI is moving fast. Too fast.
 
