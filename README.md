@@ -1,301 +1,210 @@
-<<<<<<< HEAD
-# 🏥 **Project ATLAS** — *AI Clinical Decision Engine*
+# ATLAS — Verifiable Healthcare AI Safety Infrastructure
 
-### The safety infrastructure healthcare AI has been missing — consent, audit, and identity — as open, plug-and-play tools.
+**Every AI diagnosis gets a cryptographic receipt. Every action checks patient consent first.**
 
 ---
 
-## 🩺 What It Actually Does
+## ⚡ Problem Pitch
 
-A patient types: *"I have chest pain and my left arm is numb."*
+ATLAS is a safety layer for healthcare AI that ensures every decision is:
 
-ATLAS handles the entire clinical decision workflow:
+- ✅ **Verified** by patient consent
+- ✅ **Logged** with cryptographic proof
+- ✅ **Explainable** with structured reasoning
+
+Think: **Stripe for healthcare AI safety.**
+
+---
+
+## The Problem (30 seconds)
+
+Healthcare AI is moving fast. Too fast.
 
 ```
-1. 🤖  AI identifies EMERGENT urgency via GPT-4 clinical reasoning
-2. 🛡️  Verifies patient consent before accessing any medical history
-3. 📋  Fetches active medications from the live FHIR record
-4. 🏥  Routes to the nearest ED with specialist recommendations
-5. 🔐  Every step is logged in a cryptographically-signed, tamper-proof audit trail
+❌ Black box decisions — no audit trail
+❌ No patient consent enforcement  
+❌ "Trust us, the AI is right" isn't good enough
 ```
 
-**All in under 3 seconds. All via standard open protocols anyone can plug into.**
-
-This is not a prototype of an idea. Every step above maps to real, working code.
-
----
-
-## ✨ Core Capabilities
-
-### 🧠 Generative AI Triage (`atlas-ai-core`)
-- Uses **OpenAI GPT-4 Turbo** for deep clinical reasoning over unstructured symptom narratives.
-- Automatically enriches AI context with live patient data via SHARP-authenticated FHIR queries.
-- Structured JSON output with urgency classification, differential diagnoses, and actionable recommendations.
-- Rule-based fallback engine ensures safety even when the LLM is unavailable.
-
-### 🔬 Dedicated Triage Agent (`atlas-agent-triage`)
-- Standalone clinical engine with ICD-10 mapped differential diagnoses.
-- Vital-sign threshold analysis (O₂ saturation, blood pressure, heart rate, temperature, respiratory rate).
-- Red flag identification and contraindication checking against patient medications and allergies.
-- Configurable care pathway routing: **ED → Urgent Care → Primary Care → Telehealth**.
-
-### 🔐 SMART on FHIR Identity (`atlas-tool-identity`)
-- Full **OAuth2 + SMART on FHIR** client — Authorization Code, Client Credentials, and Token Refresh flows.
-- **PKCE support** (SHA-256 code challenge) for public client security.
-- Auto-discovery of `.well-known/smart-configuration` with TTL-aware caching.
-- Compatible with Epic, Cerner, Azure Health Data Services, and any SMART-compliant EHR.
-
-### 🔒 Cryptographic Audit MCP (`atlas-mcp-audit`)
-- **SHA-256 hash chains** — every event is cryptographically linked to the previous one.
-- Tamper-evident audit log with `verify_audit_trail` integrity checks.
-- Exposed as a standard **MCP server** — any platform agent can log and query events via `log_audit_event` and `query_audit_events`.
-
-### 🛡️ Patient Consent MCP (`atlas-mcp-consent`)
-- HIPAA-scoped consent management (Treatment, Research, Data Sharing, Emergency).
-- Full consent lifecycle: request, check, revoke, and audit.
-- Exposed as a standard **MCP server** for plug-and-play use across the ecosystem.
-
-### 📡 A2A Protocol & SHARP Context (`atlas-a2a-protocol`)
-- Typed **Agent-to-Agent message bus** (REQUEST, RESPONSE, NOTIFICATION, HANDOFF).
-- Full handoff lifecycle: PENDING → ACCEPTED → IN_PROGRESS → COMPLETED / FAILED / TIMEOUT.
-- **SHARP Extension Specs** — cryptographic propagation tokens carry patient context securely across agent boundaries.
-- Agent capability discovery by type, capability, or FHIR resource type.
-
-### 🌐 FHIR R4 Integration (`atlas-std-fhir`)
-- Native FHIR R4 client for Patient, Observation, MedicationRequest, Condition, Encounter, and Bundle resources.
-- Integrated with SHARP token authentication for secure cross-agent data access.
+**ATLAS adds a safety layer that makes AI decisions:**
+- ✅ Cryptographically auditable
+- ✅ Consent-aware at runtime
+- ✅ Explainable with structured reasoning
 
 ---
 
-## 🏗️ System Architecture
+## How It Works
 
-```text
-┌───────────────────────────────────────────────────────────────────────┐
-│                           PROJECT ATLAS                               │
-│                                                                       │
-│  ┌─────────────────────────────────────────────────────────────────┐  │
-│  │              IDENTITY LAYER (atlas-tool-identity)               │  │
-│  │         SMART on FHIR · OAuth2 · PKCE · Token Lifecycle         │  │
-│  └──────────────────────────────┬──────────────────────────────────┘  │
-│                                 │                                     │
-│  ┌──────────────────────────────▼──────────────────────────────────┐  │
-│  │          CARE COORDINATOR (atlas-agent-coordinator)             │  │
-│  │        A2A Message Bus · SHARP Context Propagation              │  │
-│  └─────────┬──────────────┬──────────────┬───────────┬─────────────┘  │
-│            │              │              │           │                 │
-│  ┌─────────▼──────┐ ┌─────▼──────┐ ┌────▼────┐ ┌───▼─────────┐      │
-│  │ AI Triage Agent│ │Triage Agent│ │  Proxy  │ │   Referral  │      │
-│  │ (GPT-4 Turbo)  │ │ (Rule-Based│ │  Agent  │ │    Agent    │      │
-│  │ atlas-ai-core  │ │   ICD-10)  │ │         │ │             │      │
-│  └────────────────┘ └────────────┘ └─────────┘ └─────────────┘      │
-│                                                                       │
-│  ┌─────────────────────────────────────────────────────────────────┐  │
-│  │                  MCP SUPERPOWERS (Tools)                        │  │
-│  │  ┌───────────────────────┐   ┌──────────────────────────────┐   │  │
-│  │  │   atlas-mcp-consent   │   │      atlas-mcp-audit         │   │  │
-│  │  │   HIPAA Consent Mgmt  │   │   SHA-256 Hash Chain Audit   │   │  │
-│  │  └───────────────────────┘   └──────────────────────────────┘   │  │
-│  └─────────────────────────────────────────────────────────────────┘  │
-└───────────────────────────────────────────────────────────────────────┘
-=======
-# 🏥 ATLAS — Verifiable Healthcare AI Infrastructure
-
-### Safe AI decisions with cryptographic audit trails and patient consent enforcement
-
----
-
-## 🚀 Overview
-
-Healthcare AI is powerful—but unsafe without auditability and consent enforcement.
-
-ATLAS solves this by introducing a verifiable execution layer for clinical AI systems. It combines Generative AI with MCP-based consent and audit servers to ensure every decision is explainable, authorized, and cryptographically provable.
-
----
-
-## ⚠️ The Problem
-
-- Healthcare AI systems operate as black boxes
-- No verifiable audit trail for decisions
-- No enforceable patient consent boundaries
-- Difficult to deploy safely in real clinical environments
-
-## ✅ The Solution
-
-ATLAS introduces:
-- **Verifiable AI execution** via SHA-256 audit chains
-- **Consent-aware workflows** enforced at runtime
-- **Interoperable MCP tools** usable by any agent
-
----
-
-## ✨ Key Features & "Superpowers"
-
-ATLAS is built defensively on modern standards. It exposes native MCP servers ("Superpowers") that any agent in the ecosystem can leverage:
-
-### 🧠 1. Generative AI Core (`atlas-ai-core`)
-- Uses **OpenAI (GPT-4 Turbo)** to digest unstructured patient symptoms alongside structured context (age, vitals, medical history, medications).
-- Context-aware clinical reasoning outputs standardized JSON differential diagnoses with evidence-based urgency and recommendations.
-
-### 🔒 2. Cryptographic Audit MCP (`atlas-mcp-audit`)
-- **Verifiable Logging:** Step-by-step audit traceability for all AI decisions.
-- **SHA-256 Hash Chains:** Every event is cryptographically linked to the previous one, ensuring the log's integrity cannot be tampered with.
-- **MCP Server:** Exposes tools for agents to `log_audit_event`, `query_audit_events`, and `verify_audit_trail`.
-
-### 🛡️ 3. Patient Consent MCP (`atlas-mcp-consent`)
-- **Scoped Verification:** Verifies patient consent boundaries before any AI agent takes action (e.g., Treatment, Data Sharing, Emergency).
-- **MCP Server:** Exposes standard tools to `request_consent`, `check_consent`, and `revoke_consent`.
-
-### 🌐 4. Care Coordinator (`atlas-agent-coordinator`)
-- A multi-agent orchestrator managing the workflow lifecycle.
-- Handles handoffs between intake, symptom triage, care routing, and medication checks.
-- Enforces strict circuit-breaking, retry logic, and timeouts.
-
----
-
-## 🏗️ Architecture
-
-```text
-┌─────────────────────────────────────────────────────────────┐
-│                     PROJECT ATLAS                           │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │                CARE COORDINATOR (A2A)                 │  │
-│  │  Orchestrates session state and agent handoffs        │  │
-│  └──────────────────────────┬────────────────────────────┘  │
-│                             │                               │
-│  ┌──────────────────────────▼────────────────────────────┐  │
-│  │                 AI AGENT INTERFACE                    │  │
-│  │   ┌────────────┐   ┌────────────┐   ┌─────────────┐   │  │
-│  │   │   Intake   │   │   Triage   │   │   Routing   │   │  │
-│  │   │   Agent    │   │   Agent    │   │   Agent     │   │  │
-│  │   └────────────┘   └──────┬─────┘   └─────────────┘   │  │
-│  └───────────────────────────┼───────────────────────────┘  │
-│                              │                              │
-│  ┌───────────────────────────▼───────────────────────────┐  │
-│  │                MCP SUPERPOWERS (Tools)                │  │
-│  │  ┌──────────────────────┐   ┌──────────────────────┐  │  │
-│  │  │  atlas-mcp-consent   │   │   atlas-mcp-audit    │  │  │
-│  │  │  (HIPAA Scopes)      │   │   (SHA-256 Chains)   │  │  │
-│  │  └──────────────────────┘   └──────────────────────┘  │  │
-│  └───────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
+```
+Patient describes symptoms
+        ↓
+   [Consent Check] ←── Is this action allowed?
+        ↓ Approved
+   AI processes case with context
+        ↓
+   Generates differential diagnosis
+        ↓
+   [Audit Log] ←── SHA-256 hash chain entry
+        ↓
+   Explainable JSON output
 ```
 
----
-
-<<<<<<< HEAD
-## 📦 Package Overview
-
-> Each package below is fully implemented. Click the proof link to see the core logic.
-
-| Package | Role | Proof |
-|---|---|---|
-| `atlas-ai-core` | GPT-4 Turbo AI triage + structured output | [`AITriageAgent.analyzeSymptoms()`](packages/atlas-ai-core/src/index.ts) |
-| `atlas-agent-coordinator` | SHARP-wired workflow orchestrator | [`callAgent()`](packages/atlas-agent-coordinator/src/care-coordinator.ts) |
-| `atlas-agent-triage` | Rule-based clinical engine (ICD-10, vitals, red flags) | [`TriageEngine.assessUrgency()`](packages/atlas-agent-triage/src/triage-agent.ts) |
-| `atlas-agent-proxy` | Patient-facing communication layer | [`PatientProxyAgent.processMessage()`](packages/atlas-agent-proxy/src/patient-proxy.ts) |
-| `atlas-mcp-audit` | MCP server — SHA-256 cryptographic audit trail | [`server.ts`](packages/atlas-mcp-audit/src/server.ts) |
-| `atlas-mcp-consent` | MCP server — HIPAA-scoped consent management | [`server.ts`](packages/atlas-mcp-consent/src/server.ts) |
-| `atlas-tool-identity` | SMART on FHIR OAuth2 identity bridge + PKCE | [`IdentityBridge.exchangeCodeForToken()`](packages/atlas-tool-identity/src/identity-bridge.ts) |
-| `atlas-a2a-protocol` | A2A message bus + SHARP Extension Specs | [`A2AProtocolManager.initiateHandoff()`](packages/atlas-a2a-protocol/src/index.ts) |
-| `atlas-std-fhir` | FHIR R4 client (Patient, Observation, Meds, Conditions) | [`client.ts`](packages/atlas-std-fhir/src/client.ts) |
-| `atlas-tool-audit` | Core audit logger with hash-chain integrity | [`audit-logger.ts`](packages/atlas-tool-audit/src/audit-logger.ts) |
-| `atlas-tool-consent` | Core consent engine logic | [`consent-engine.ts`](packages/atlas-tool-consent/src/consent-engine.ts) |
+**Three components, one guarantee:** Every decision is traceable and authorized.
 
 ---
 
-=======
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
-## 🚀 Quick Start
+## The Stack
 
-### 1. Install Dependencies
+| Component | What It Does |
+|-----------|--------------|
+| **AI Core** | LLM-based clinical reasoning (GPT-4 Turbo) + patient context → structured differential diagnoses |
+| **Consent MCP** | Runtime permission checks before any AI action |
+| **Audit MCP** | SHA-256 hash chains — tamper-evident logging |
+| **Coordinator** | Multi-agent orchestration with circuit breakers |
+
+---
+
+## Live Demo
+
 ```bash
-<<<<<<< HEAD
-=======
-# Install dependencies from the root
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
+# Clone and run
+git clone https://github.com/esskslifetech/ATLAS-Healthcare-AI-Safety-Infrastructure
+cd ATLAS
 npm install
-```
 
-### 2. Configure Environment
-<<<<<<< HEAD
-```bash
-# Required: OpenAI API key for AI triage
-export OPENAI_API_KEY="sk-..."
+# Set your key
+export OPENAI_API_KEY="your-key"
 
-# Optional: FHIR server (defaults to demo endpoint)
-export FHIR_BASE_URL="https://launch.smarthealthit.org/v/r4/fhir"
-export FHIR_TOKEN="your-smart-token"
-```
-
-### 3. Run the System
-```bash
-# Start the main API server
+# Run the demo
 node -r ts-node/register src/demo/api-demo.ts
 ```
 
-### 4. Run MCP Servers
-The MCP servers expose audit and consent capabilities to any MCP-compatible agent platform:
-```bash
-# Audit MCP server
-npx ts-node packages/atlas-mcp-audit/src/server.ts
+**What you'll see:**
 
-# Consent MCP server
-npx ts-node packages/atlas-mcp-consent/src/server.ts
-=======
-Set up your OpenAI API key for the generative AI core:
-```bash
-export OPENAI_API_KEY="your-sk-key-here"
+```json
+{
+  "patient_id": "PT-2024-001",
+  "consent_verified": true,
+  "consent_scope": ["treatment", "data_processing"],
+  "diagnosis": {
+    "differentials": [
+      {
+        "condition": "Acute Bronchitis",
+        "confidence": 0.72,
+        "urgency": "routine",
+        "evidence": ["persistent_cough_7days", "no_fever", "clear_lungs"]
+      },
+      {
+        "condition": "Upper Respiratory Infection", 
+        "confidence": 0.58,
+        "urgency": "routine",
+        "evidence": ["congestion", "sore_throat", "mild_fatigue"]
+      }
+    ]
+  },
+  "audit": {
+    "event_id": "AUD-7f3a9c2e",
+    "hash": "sha256:8f2d4b1a...",
+    "prev_hash": "sha256:3c9e7f2a...",
+    "timestamp": "2024-03-15T14:32:01Z"
+  }
+}
 ```
 
-### 3. Run the Demos
-ATLAS includes several demo scripts to illustrate its capabilities:
-```bash
-# Start the API server
-node -r ts-node/register src/demo/api-demo.ts
+---
 
-# Test API functionality
-node -r ts-node/register src/demo/test-api.ts
+## Why This Wins
 
-# (For MCP Servers, run them via a standard MCP client or prompt environment)
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
+### 🏆 It's infrastructure, not an app
+
+Judges see chatbots all day. ATLAS is different:
+
+> "We built the safety layer that ANY healthcare AI needs"
+
+That's a platform play. That's defensible.
+
+→ **This means ATLAS doesn't compete with healthcare AI apps — it powers them.**
+
+### 🔒 The audit chain is real
+
+```
+Event 1 → SHA-256 → Hash A
+Event 2 → SHA-256 → Hash B (includes Hash A)
+Event 3 → SHA-256 → Hash C (includes Hash B)
+                    ↓
+        Tamper with Event 1?
+        → Entire chain breaks
+        → Instantly detectable
 ```
 
----
+Not theater. Actual cryptographic integrity.
 
-<<<<<<< HEAD
-## 🎯 Hackathon Alignment — Agents Assemble
+### 🛡️ Consent isn't optional
 
-ATLAS addresses the **"Healthcare AI Endgame"** head-on:
+```typescript
+// This fails if consent isn't granted
+const result = await aiCore.diagnose(patientData);
+// Error: CONSENT_REQUIRED — scope 'treatment' not verified
 
-| Requirement | Implementation |
-|---|---|
-| **Generative AI** | GPT-4 Turbo clinical reasoning via `atlas-ai-core` |
-| **MCP Superpowers** | Two production-quality MCP servers (audit + consent) |
-| **A2A Standards** | Full A2A message bus with typed handoffs and SHARP context propagation |
-| **FHIR Integration** | FHIR R4 client + SMART on FHIR OAuth2 authentication |
-| **SHARP Extension Specs** | Complete implementation in `atlas-a2a-protocol` |
-| **Healthcare Safety** | SHA-256 hash chains, HIPAA consent scopes, SMART auth |
+// This succeeds only after consent check
+const consent = await consentServer.check(patientId, 'treatment');
+if (consent.approved) {
+  const result = await aiCore.diagnose(patientData);
+}
+```
 
----
+### 🧠 Explanations, not just answers
 
-**ATLAS demonstrates the endgame of healthcare AI: powerful multi-agent intelligence, constrained by cryptographic safety, patient consent, and interoperable standards.**
-=======
-## 🎯 Perfect For "Agents Assemble"
-
-This project was built for the **Agents Assemble - The Healthcare AI Endgame** hackathon, targeting the exact requirements of the Prompt Opinion platform:
-- **Standards Built-In:** Fully integrates Model Context Protocol (MCP) servers to expose reusable tools across the ecosystem.
-- **The AI Factor:** Utilizes Generative AI to understand complex, unstructured patient presentation that standard "rule engines" cannot capture.
-- **Feasible & Secure:** Designed from day one with compliance in mind via cryptographic SHA-256 auditing and explicit patient consent protocols. 
+Every diagnosis includes:
+- **Confidence scores** — we know when we're uncertain
+- **Evidence attribution** — which symptoms led to which conclusion
+- **Urgency classification** — routine, urgent, emergency
 
 ---
 
-**ATLAS demonstrates the endgame of healthcare AI: powerful, interoperable intelligence constrained by rigorous cryptographic safety and patient consent.**
+## Architecture (Simplified)
+
+```
+┌─────────────────────────────────────────┐
+│           CARE COORDINATOR              │
+│     (Multi-agent orchestration)         │
+└────────────────┬────────────────────────┘
+                 │
+    ┌────────────┼────────────┐
+    ↓            ↓            ↓
+┌────────┐  ┌────────┐  ┌────────┐
+│ Intake │→ │ Triage │→ │Routing │
+│ Agent  │  │ Agent  │  │ Agent  │
+└────────┘  └────┬───┘  └────────┘
+                 │
+         ┌───────┴───────┐
+         ↓               ↓
+   ┌───────────┐   ┌───────────┐
+   │  CONSENT  │   │   AUDIT   │
+   │   MCP     │   │    MCP    │
+   │  Server   │   │   Server  │
+   └───────────┘   └───────────┘
+```
+
+**Two MCP servers** that any agent in the ecosystem can use.
 
 ---
 
-## 👨‍💻 Author
+## Tech Details
 
-**Kanishk Soni**  
-[GitHub](https://github.com/esskslifetech) | [Repository](https://github.com/esskslifetech/ATLAS-Healthcare-AI-Safety-Infrastructure)
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
+- **Language**: TypeScript
+- **AI**: LLM-based clinical reasoning (GPT-4 Turbo) + patient context
+- **Protocol**: MCP 1.0
+- **Crypto**: SHA-256 hash chains
+- **Architecture**: Multi-agent with circuit breakers
+
+---
+
+## Author
+
+**Kanishk Soni**
+[GitHub](https://github.com/esskslifetech) | [Repo](https://github.com/esskslifetech/ATLAS-Healthcare-AI-Safety-Infrastructure)
+
+---
+
+*Built for Agents Assemble — Healthcare AI Endgame*
