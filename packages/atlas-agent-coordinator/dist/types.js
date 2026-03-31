@@ -112,6 +112,8 @@ exports.CareSessionSchema = zod_1.z.object({
             medicalHistory: zod_1.z.array(zod_1.z.string()).optional(),
         })
             .optional(),
+        clinicalContext: zod_1.z.any().optional(),
+        sharpContext: zod_1.z.any().optional(),
         triage_result: zod_1.z
             .object({
             urgency: exports.UrgencySchema,

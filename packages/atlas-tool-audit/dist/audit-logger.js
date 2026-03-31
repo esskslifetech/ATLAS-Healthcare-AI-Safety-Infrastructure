@@ -134,20 +134,19 @@ class AuditStore {
             if (query.result)
                 filtered = filtered.filter(e => e.result === query.result);
             if (query.start_date) {
-                const start = new Date(query.start_date);
-                filtered = filtered.filter(e => new Date(e.timestamp) >= start);
+                filtered = filtered.filter(e => e.timestamp >= query.start_date);
             }
             if (query.end_date) {
-                const end = new Date(query.end_date);
-                filtered = filtered.filter(e => new Date(e.timestamp) <= end);
+                filtered = filtered.filter(e => e.timestamp <= query.end_date);
             }
-            if (query.purpose)
-                filtered = filtered.filter(e => e.purpose === query.purpose);
-            filtered.sort((a, b) => {
-                const aTime = new Date(a.timestamp).getTime();
-                const bTime = new Date(b.timestamp).getTime();
-                return query.sort_order === 'desc' ? bTime - aTime : aTime - bTime;
-            });
+            // Sort by timestamp if specified
+            if (query.sort_by === 'timestamp') {
+                filtered.sort((a, b) => {
+                    const aTime = new Date(a.timestamp).getTime();
+                    const bTime = new Date(b.timestamp).getTime();
+                    return query.sort_order === 'desc' ? bTime - aTime : aTime - bTime;
+                });
+            }
             const offset = query.offset || 0;
             const limit = query.limit ?? this.defaultPageSize();
             return filtered.slice(offset, offset + limit);
@@ -159,9 +158,30 @@ class AuditStore {
     async getStatistics(query) {
         const release = await this.lock.acquire();
         try {
-            const events = await this.queryEvents(query);
+            // Use internal query logic to avoid deadlock
+            let filtered = [...this.events];
+            if (query.patient_id)
+                filtered = filtered.filter(e => e.patient_id === query.patient_id);
+            if (query.actor_id)
+                filtered = filtered.filter(e => e.actor.id === query.actor_id);
+            if (query.actor_type)
+                filtered = filtered.filter(e => e.actor.type === query.actor_type);
+            if (query.action)
+                filtered = filtered.filter(e => e.action === query.action);
+            if (query.resource_type)
+                filtered = filtered.filter(e => e.resource.type === query.resource_type);
+            if (query.resource_id)
+                filtered = filtered.filter(e => e.resource.id === query.resource_id);
+            if (query.result)
+                filtered = filtered.filter(e => e.result === query.result);
+            if (query.start_date) {
+                filtered = filtered.filter(e => e.timestamp >= query.start_date);
+            }
+            if (query.end_date) {
+                filtered = filtered.filter(e => e.timestamp <= query.end_date);
+            }
             const stats = {
-                total_events: events.length,
+                total_events: filtered.length,
                 events_by_type: {},
                 events_by_action: {},
                 events_by_actor: {},
@@ -175,7 +195,7 @@ class AuditStore {
                 error_rate: 0,
                 access_denied_rate: 0,
             };
-            for (const e of events) {
+            for (const e of filtered) {
                 stats.events_by_type[e.type] = (stats.events_by_type[e.type] || 0) + 1;
                 stats.events_by_action[e.action] = (stats.events_by_action[e.action] || 0) + 1;
                 stats.events_by_actor[e.actor.id] = (stats.events_by_actor[e.actor.id] || 0) + 1;
@@ -188,12 +208,12 @@ class AuditStore {
                     stats.unique_patients.add(e.patient_id);
                 stats.unique_actors.add(e.actor.id);
             }
-            if (events.length) {
-                const times = events.map(e => new Date(e.timestamp).getTime());
+            if (filtered.length) {
+                const times = filtered.map(e => new Date(e.timestamp).getTime());
                 stats.date_range.start = new Date(Math.min(...times)).toISOString();
                 stats.date_range.end = new Date(Math.max(...times)).toISOString();
-                stats.error_rate = (stats.events_by_result['FAILURE'] || 0) / events.length;
-                stats.access_denied_rate = (stats.events_by_action['ACCESS_DENIED'] || 0) / events.length;
+                stats.error_rate = (stats.events_by_result['FAILURE'] || 0) / filtered.length;
+                stats.access_denied_rate = (stats.events_by_action['ACCESS_DENIED'] || 0) / filtered.length;
             }
             return {
                 total_events: stats.total_events,
