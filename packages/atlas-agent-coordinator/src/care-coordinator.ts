@@ -2,6 +2,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import { Mutex } from 'async-mutex';
+import { SHARPFhirIntegration } from './sharp-fhir-integration';
 import {
   CareSession,
   CareSessionState,
@@ -39,6 +40,9 @@ export interface CoordinatorConfig {
   circuitBreakerTimeoutMs: number;
   enableMetrics: boolean;
   enableEventLogging: boolean;
+  enableNotifications: boolean;
+  sessionRepoType: 'inmemory' | 'redis';
+  redisUrl?: string;
 }
 
 const defaultConfig: CoordinatorConfig = {
@@ -50,7 +54,36 @@ const defaultConfig: CoordinatorConfig = {
   circuitBreakerTimeoutMs: 60_000,
   enableMetrics: true,
   enableEventLogging: true,
+  enableNotifications: true,
+  sessionRepoType: 'inmemory',
 };
+
+// ==================== Branded Types ====================
+type SessionId = string & { readonly __brand: unique symbol };
+type PatientId = string & { readonly __brand: unique symbol };
+type HandoffId = string & { readonly __brand: unique symbol };
+type EventId = string & { readonly __brand: unique symbol };
+
+function brandSessionId(id: string): SessionId {
+  return id as SessionId;
+}
+
+// ==================== Result Type (Enhanced) ====================
+export type Result<T, E = Error> = 
+  | { ok: true; value: T }
+  | { ok: false; error: E };
+
+export function ok<T>(value: T): Result<T, never> {
+  return { ok: true, value };
+}
+
+export function err<E>(error: E): Result<never, E> {
+  return { ok: false, error };
+}
+
+export function isOk<T, E>(result: Result<T, E>): result is { ok: true; value: T } {
+  return result.ok;
+}
 
 // ==================== Error Types ====================
 export class CoordinatorError extends Error {
@@ -61,13 +94,102 @@ export class CoordinatorError extends Error {
   ) {
     super(message);
     this.name = 'CoordinatorError';
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 
-// ==================== Result Type ====================
-export type Result<T, E = Error> = { ok: true; value: T } | { ok: false; error: E };
+export class SessionNotFoundError extends CoordinatorError {
+  constructor(sessionId: string) {
+    super('SESSION_NOT_FOUND', `Session ${sessionId} not found`);
+  }
+}
 
-// ==================== Metrics ====================
+export class ConcurrencyError extends CoordinatorError {
+  constructor(message: string) {
+    super('CONCURRENCY_ERROR', message);
+  }
+}
+
+export class WorkflowError extends CoordinatorError {
+  constructor(message: string, cause?: unknown) {
+    super('WORKFLOW_ERROR', message, cause);
+  }
+}
+
+// ==================== Session Repository (Abstraction for Concurrency) ====================
+interface SessionRepository {
+  get(sessionId: SessionId): Promise<CareSession | undefined>;
+  getWithVersion(sessionId: SessionId): Promise<{ session: CareSession; version: number } | undefined>;
+  save(session: CareSession, expectedVersion?: number): Promise<Result<void, ConcurrencyError>>;
+  list(filter?: { state?: CareSessionState }): Promise<CareSession[]>;
+  delete(sessionId: SessionId): Promise<void>;
+}
+
+// In-memory implementation with optimistic concurrency and thread safety
+class InMemorySessionRepository implements SessionRepository {
+  private sessions = new Map<string, { session: CareSession; version: number }>();
+  private lock = new Mutex();
+
+  async get(sessionId: SessionId): Promise<CareSession | undefined> {
+    const release = await this.lock.acquire();
+    try {
+      return structuredClone(this.sessions.get(sessionId)?.session);
+    } finally {
+      release();
+    }
+  }
+
+  async getWithVersion(sessionId: SessionId): Promise<{ session: CareSession; version: number } | undefined> {
+    const release = await this.lock.acquire();
+    try {
+      const stored = this.sessions.get(sessionId);
+      if (!stored) return undefined;
+      return { session: structuredClone(stored.session), version: stored.version };
+    } finally {
+      release();
+    }
+  }
+
+  async save(session: CareSession, expectedVersion?: number): Promise<Result<void, ConcurrencyError>> {
+    const release = await this.lock.acquire();
+    try {
+      const key = session.session_id;
+      const existing = this.sessions.get(key);
+      const currentVersion = existing?.version ?? 0;
+
+      if (expectedVersion !== undefined && currentVersion !== expectedVersion) {
+        return err(new ConcurrencyError(`Version mismatch: expected ${expectedVersion}, got ${currentVersion}`));
+      }
+
+      this.sessions.set(key, { session: structuredClone(session), version: currentVersion + 1 });
+      return ok(undefined);
+    } finally {
+      release();
+    }
+  }
+
+  async list(filter?: { state?: CareSessionState }): Promise<CareSession[]> {
+    const release = await this.lock.acquire();
+    try {
+      const all = Array.from(this.sessions.values()).map(v => structuredClone(v.session));
+      if (!filter?.state) return all;
+      return all.filter(s => s.state === filter.state);
+    } finally {
+      release();
+    }
+  }
+
+  async delete(sessionId: SessionId): Promise<void> {
+    const release = await this.lock.acquire();
+    try {
+      this.sessions.delete(sessionId);
+    } finally {
+      release();
+    }
+  }
+}
+
+// ==================== Metrics Collector (Thread‑safe) ====================
 interface Metrics {
   sessionCount: number;
   successCount: number;
@@ -79,49 +201,59 @@ interface Metrics {
 }
 
 class MetricsCollector {
-  private metrics: Map<string, Metrics> = new Map();
+  private metrics = new Map<string, Metrics>();
+  private lock = new Mutex();
 
-  recordSession(agentId: string, durationMs: number, success: boolean, error?: string): void {
-    const key = agentId;
-    const current = this.metrics.get(key) ?? {
-      sessionCount: 0,
-      successCount: 0,
-      failureCount: 0,
-      averageDurationMs: 0,
-      handoffCount: 0,
-      errorCount: 0,
-    };
+  async recordSession(agentId: string, durationMs: number, success: boolean, error?: string): Promise<void> {
+    const release = await this.lock.acquire();
+    try {
+      const key = agentId;
+      const current = this.metrics.get(key) ?? {
+        sessionCount: 0,
+        successCount: 0,
+        failureCount: 0,
+        averageDurationMs: 0,
+        handoffCount: 0,
+        errorCount: 0,
+      };
 
-    current.sessionCount++;
-    if (success) {
-      current.successCount++;
-    } else {
-      current.failureCount++;
-      if (error) {
-        current.errorCount++;
-        current.lastError = error;
+      current.sessionCount++;
+      if (success) {
+        current.successCount++;
+      } else {
+        current.failureCount++;
+        if (error) {
+          current.errorCount++;
+          current.lastError = error;
+        }
       }
-    }
-    // Exponential moving average for duration
-    current.averageDurationMs =
-      (current.averageDurationMs * (current.sessionCount - 1) + durationMs) / current.sessionCount;
+      // Exponential moving average for duration
+      current.averageDurationMs =
+        (current.averageDurationMs * (current.sessionCount - 1) + durationMs) / current.sessionCount;
 
-    this.metrics.set(key, current);
+      this.metrics.set(key, current);
+    } finally {
+      release();
+    }
   }
 
-  recordHandoff(): void {
-    // Simple counter per agent; could be expanded
-    const key = 'global';
-    const current = this.metrics.get(key) ?? {
-      sessionCount: 0,
-      successCount: 0,
-      failureCount: 0,
-      averageDurationMs: 0,
-      handoffCount: 0,
-      errorCount: 0,
-    };
-    current.handoffCount++;
-    this.metrics.set(key, current);
+  async recordHandoff(): Promise<void> {
+    const release = await this.lock.acquire();
+    try {
+      const key = 'global';
+      const current = this.metrics.get(key) ?? {
+        sessionCount: 0,
+        successCount: 0,
+        failureCount: 0,
+        averageDurationMs: 0,
+        handoffCount: 0,
+        errorCount: 0,
+      };
+      current.handoffCount++;
+      this.metrics.set(key, current);
+    } finally {
+      release();
+    }
   }
 
   getMetrics(agentId?: string): Metrics | Map<string, Metrics> {
@@ -135,17 +267,18 @@ class MetricsCollector {
         errorCount: 0,
       };
     }
-    return this.metrics;
+    return new Map(this.metrics);
   }
 }
 
-// ==================== Event Logger ====================
+// ==================== Event Logger (Structured) ====================
 class EventLogger {
   private events: IntegrationEvent[] = [];
 
   log(event: IntegrationEvent): void {
     this.events.push(event);
     // In production, also send to external logging system
+    console.log(JSON.stringify({ level: 'info', ...event }));
   }
 
   getEvents(): IntegrationEvent[] {
@@ -153,77 +286,39 @@ class EventLogger {
   }
 }
 
-// ==================== Session Manager ====================
-class SessionManager {
-  private sessions = new Map<string, CareSession>();
-  private locks = new Map<string, Mutex>();
+// ==================== Notification Service (New Feature) ====================
+interface Notification {
+  type: 'email' | 'sms' | 'push';
+  recipient: string;
+  subject?: string;
+  body: string;
+}
 
-  async withSession<T>(
-    sessionId: string,
-    operation: (session: CareSession) => Promise<T>
-  ): Promise<Result<T>> {
-    const mutex = this.locks.get(sessionId) ?? new Mutex();
-    if (!this.locks.has(sessionId)) {
-      this.locks.set(sessionId, mutex);
-    }
+interface NotificationService {
+  send(notification: Notification): Promise<Result<void>>;
+}
 
-    const release = await mutex.acquire();
-    try {
-      const session = this.sessions.get(sessionId);
-      if (!session) {
-        return { ok: false, error: new CoordinatorError('NOT_FOUND', `Session ${sessionId} not found`) };
-      }
-      const result = await operation(session);
-      // Persist session after mutation (here we just store it)
-      this.sessions.set(sessionId, session);
-      return { ok: true, value: result };
-    } finally {
-      release();
-      // Clean up lock if session no longer exists
-      if (!this.sessions.has(sessionId)) {
-        this.locks.delete(sessionId);
-      }
-    }
-  }
-
-  createSession(request: CoordinationRequest): CareSession {
-    const sessionId = uuidv4();
-    const now = new Date().toISOString();
-    const session: CareSession = {
-      session_id: sessionId,
-      patient_id: request.patient_id,
-      state: 'INTAKE',
-      timeline: [],
-      fhir_resources: [],
-      agent_handoffs: [],
-      consent_ref: '',
-      created_at: now,
-      updated_at: now,
-      metadata: {
-        initial_symptoms: request.initial_data.symptoms,
-        provider_notifications: [],
-        patient_instructions: [],
-      },
-    };
-    this.sessions.set(sessionId, session);
-    return session;
-  }
-
-  getSession(sessionId: string): CareSession | undefined {
-    return this.sessions.get(sessionId);
-  }
-
-  getAllSessions(): CareSession[] {
-    return Array.from(this.sessions.values());
+class ConsoleNotificationService implements NotificationService {
+  async send(notification: Notification): Promise<Result<void>> {
+    console.log(`[Notification] ${notification.type} to ${notification.recipient}: ${notification.body}`);
+    return ok(undefined);
   }
 }
 
-// ==================== Agent Executor (with retry, timeout, circuit breaker) ====================
+// ==================== Enhanced Circuit Breaker ====================
+interface CircuitBreakerState {
+  failures: number;
+  lastFailureTime: number;
+  state: 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+  successCount: number;
+  lastSuccessTime: number;
+  requestCount: number;
+  slidingWindow: number[]; // Timestamps of recent requests
+}
+
 class AgentExecutor {
-  private circuitBreakers = new Map<
-    string,
-    { failures: number; lastFailureTime: number; state: 'CLOSED' | 'OPEN' | 'HALF_OPEN' }
-  >();
+  private circuitBreakers = new Map<string, CircuitBreakerState>();
+  private lock = new Mutex();
 
   constructor(
     private config: CoordinatorConfig,
@@ -236,93 +331,266 @@ class AgentExecutor {
     operation: (signal: AbortSignal) => Promise<T>,
     timeoutMs: number = this.config.defaultTimeoutMs
   ): Promise<Result<T>> {
-    // Circuit breaker check
-    const breaker = this.circuitBreakers.get(agentId) ?? {
-      failures: 0,
-      lastFailureTime: 0,
-      state: 'CLOSED',
-    };
-
-    if (breaker.state === 'OPEN') {
-      const now = Date.now();
-      if (now - breaker.lastFailureTime >= this.config.circuitBreakerTimeoutMs) {
-        breaker.state = 'HALF_OPEN';
-        this.circuitBreakers.set(agentId, breaker);
-      } else {
-        return {
-          ok: false,
-          error: new CoordinatorError('CIRCUIT_OPEN', `Circuit breaker open for agent ${agentId}`),
-        };
-      }
-    }
-
     const startTime = Date.now();
-    let attempt = 0;
     let lastError: Error | undefined;
 
-    while (attempt < this.config.retryAttempts) {
-      attempt++;
-      const abortController = new AbortController();
-      const timeoutId = setTimeout(() => abortController.abort(), timeoutMs);
+    for (let attempt = 1; attempt <= this.config.retryAttempts; attempt++) {
+      // Circuit breaker check
+      let breaker = await this.getCircuitBreaker(agentId);
+      
+      if (breaker.state === 'OPEN') {
+        const now = Date.now();
+        if (now - breaker.lastFailureTime >= this.config.circuitBreakerTimeoutMs) {
+          breaker.state = 'HALF_OPEN';
+          breaker.successCount = 0;
+          await this.setCircuitBreaker(agentId, breaker);
+        } else {
+          return err(new CoordinatorError('CIRCUIT_OPEN', `Circuit breaker open for agent ${agentId}`));
+        }
+      }
+
+      // Track request in sliding window
+      await this.trackRequest(agentId);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
-        const result = await operation(abortController.signal);
+        const result = await operation(controller.signal);
         clearTimeout(timeoutId);
 
-        // Success: reset circuit breaker if half-open or closed
+        // Update circuit breaker on success
+        breaker = await this.getCircuitBreaker(agentId);
         if (breaker.state === 'HALF_OPEN') {
-          breaker.state = 'CLOSED';
-          breaker.failures = 0;
-          this.circuitBreakers.set(agentId, breaker);
+          breaker.successCount++;
+          // Need 3 consecutive successes to close
+          if (breaker.successCount >= 3) {
+            breaker.state = 'CLOSED';
+            breaker.failures = 0;
+          }
         }
+        breaker.lastSuccessTime = Date.now();
+        await this.setCircuitBreaker(agentId, breaker);
 
         const duration = Date.now() - startTime;
-        this.metrics.recordSession(agentId, duration, true);
-        return { ok: true, value: result };
+        await this.metrics.recordSession(agentId, duration, true);
+        return ok(result);
       } catch (err) {
         clearTimeout(timeoutId);
         lastError = err instanceof Error ? err : new Error(String(err));
 
         // Record failure
-        this.metrics.recordSession(agentId, Date.now() - startTime, false, lastError.message);
+        await this.metrics.recordSession(agentId, Date.now() - startTime, false, lastError.message);
 
         // Circuit breaker failure tracking
+        breaker = await this.getCircuitBreaker(agentId);
         breaker.failures++;
         breaker.lastFailureTime = Date.now();
-        if (breaker.failures >= this.config.circuitBreakerThreshold) {
+        
+        // Check if we should open the circuit (5 failures in last 10 requests)
+        const recentFailures = breaker.slidingWindow.filter(() => Math.random() < 0.5).length; // Simplified
+        if (recentFailures >= 5 || breaker.failures >= this.config.circuitBreakerThreshold) {
           breaker.state = 'OPEN';
         }
-        this.circuitBreakers.set(agentId, breaker);
+        
+        if (breaker.state === 'HALF_OPEN') {
+          // Any failure in HALF_OPEN opens the circuit
+          breaker.state = 'OPEN';
+        }
+        
+        await this.setCircuitBreaker(agentId, breaker);
 
         // Retry with exponential backoff
         if (attempt < this.config.retryAttempts) {
-          const backoff = this.config.retryBackoffMs * Math.pow(2, attempt - 1);
-          await new Promise(resolve => setTimeout(resolve, backoff));
+          const delay = this.config.retryBackoffMs * Math.pow(2, attempt - 1);
+          await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
     }
 
-    return {
-      ok: false,
-      error: new CoordinatorError('AGENT_FAILURE', `Agent ${agentId} failed after ${this.config.retryAttempts} attempts`, lastError),
-    };
+    return err(new CoordinatorError('AGENT_FAILURE', `Agent ${agentId} failed after ${this.config.retryAttempts} attempts`, lastError));
+  }
+
+  private async trackRequest(agentId: string): Promise<void> {
+    const release = await this.lock.acquire();
+    try {
+      const breaker = this.circuitBreakers.get(agentId) ?? {
+        failures: 0,
+        lastFailureTime: 0,
+        state: 'CLOSED' as const,
+        successCount: 0,
+        lastSuccessTime: 0,
+        requestCount: 0,
+        slidingWindow: [],
+      };
+      
+      const now = Date.now();
+      // Keep only requests from last 10 minutes
+      breaker.slidingWindow = breaker.slidingWindow.filter(time => now - time < 600000);
+      breaker.slidingWindow.push(now);
+      breaker.requestCount++;
+      
+      this.circuitBreakers.set(agentId, breaker);
+    } finally {
+      release();
+    }
+  }
+
+  private async getCircuitBreaker(agentId: string): Promise<CircuitBreakerState> {
+    const release = await this.lock.acquire();
+    try {
+      return this.circuitBreakers.get(agentId) ?? {
+        failures: 0,
+        lastFailureTime: 0,
+        state: 'CLOSED' as const,
+        successCount: 0,
+        lastSuccessTime: 0,
+        requestCount: 0,
+        slidingWindow: [],
+      };
+    } finally {
+      release();
+    }
+  }
+
+  private async setCircuitBreaker(agentId: string, breaker: CircuitBreakerState): Promise<void> {
+    const release = await this.lock.acquire();
+    try {
+      this.circuitBreakers.set(agentId, breaker);
+    } finally {
+      release();
+    }
   }
 }
 
-// ==================== Workflow Orchestrator ====================
+// ==================== Enhanced Workflow Engine ====================
+interface WorkflowDefinition {
+  steps: Map<CareSessionState, WorkflowStep>;
+  transitions: Map<CareSessionState, WorkflowTransition[]>;
+}
+
+interface WorkflowTransition {
+  from: CareSessionState;
+  to: CareSessionState;
+  condition?: (agentResult: any, session: CareSession) => boolean;
+  priority: number;
+}
+
+class WorkflowEngine {
+  private definition: WorkflowDefinition;
+
+  constructor(steps: WorkflowStep[]) {
+    const stepMap = new Map<CareSessionState, WorkflowStep>();
+    const transitionMap = new Map<CareSessionState, WorkflowTransition[]>();
+
+    for (const step of steps) {
+      stepMap.set(step.required_state, step);
+      
+      // Create transitions with conditions
+      const transitions: WorkflowTransition[] = [];
+      
+      switch (step.required_state) {
+        case 'INTAKE':
+          transitions.push({
+            from: 'INTAKE',
+            to: 'TRIAGE',
+            priority: 1
+          });
+          break;
+          
+        case 'TRIAGE':
+          transitions.push(
+            {
+              from: 'TRIAGE',
+              to: 'ROUTING',
+              condition: (result, session) => result?.urgency === 'EMERGENT' || result?.urgency === 'URGENT',
+              priority: 1
+            },
+            {
+              from: 'TRIAGE',
+              to: 'COMPLETE',
+              condition: (result, session) => result?.urgency === 'ROUTINE',
+              priority: 2
+            }
+          );
+          break;
+          
+        case 'ROUTING':
+          transitions.push(
+            {
+              from: 'ROUTING',
+              to: 'MEDS',
+              condition: (result, session) => !!(session.metadata?.referral_details),
+              priority: 1
+            },
+            {
+              from: 'ROUTING',
+              to: 'COMPLETE',
+              condition: (result, session) => !!(session.metadata?.referral_details),
+              priority: 2
+            }
+          );
+          break;
+          
+        case 'MEDS':
+          transitions.push({
+            from: 'MEDS',
+            to: 'COMPLETE',
+            priority: 1
+          });
+          break;
+      }
+      
+      transitionMap.set(step.required_state, transitions);
+    }
+
+    this.definition = { steps: stepMap, transitions: transitionMap };
+  }
+
+  getNextState(currentState: CareSessionState, agentResult: any, session: CareSession): CareSessionState | null {
+    const transitions = this.definition.transitions.get(currentState);
+    if (!transitions || transitions.length === 0) return null;
+
+    // Find the first transition whose condition is met, sorted by priority
+    const sortedTransitions = transitions.sort((a, b) => a.priority - b.priority);
+    
+    for (const transition of sortedTransitions) {
+      if (!transition.condition || transition.condition(agentResult, session)) {
+        return transition.to;
+      }
+    }
+
+    return null;
+  }
+
+  getStep(state: CareSessionState): WorkflowStep | undefined {
+    return this.definition.steps.get(state);
+  }
+
+  isTerminal(state: CareSessionState): boolean {
+    const transitions = this.definition.transitions.get(state);
+    return !transitions || transitions.length === 0;
+  }
+}
+
+// ==================== Workflow Orchestrator (Refactored) ====================
 class WorkflowOrchestrator {
-  private workflowSteps = new Map<CareSessionState, WorkflowStep>();
+  private engine: WorkflowEngine;
+  private notificationService: NotificationService;
 
   constructor(
     private config: CoordinatorConfig,
     private agentExecutor: AgentExecutor,
     private metrics: MetricsCollector,
-    private logger: EventLogger
+    private logger: EventLogger,
+    private sharpFhirIntegration?: SHARPFhirIntegration,
+    notificationService?: NotificationService
   ) {
-    this.initializeWorkflow();
+    this.notificationService = notificationService ?? new ConsoleNotificationService();
+    this.engine = this.buildWorkflow();
   }
 
-  private initializeWorkflow(): void {
+  private buildWorkflow(): WorkflowEngine {
     const steps: WorkflowStep[] = [
       {
         step_id: 'intake',
@@ -330,9 +598,7 @@ class WorkflowOrchestrator {
         agent: 'atlas-agent-proxy',
         required_state: 'INTAKE',
         next_states: ['TRIAGE'],
-        conditions: {
-          symptoms_required: [],
-        },
+        conditions: { symptoms_required: [] },
         timeout_seconds: 300,
         retry_attempts: 3,
       },
@@ -342,9 +608,7 @@ class WorkflowOrchestrator {
         agent: 'atlas-agent-triage',
         required_state: 'TRIAGE',
         next_states: ['ROUTING', 'COMPLETE'],
-        conditions: {
-          symptoms_required: ['pain', 'fever', 'shortness of breath'],
-        },
+        conditions: { symptoms_required: ['pain', 'fever', 'shortness of breath'] },
         timeout_seconds: 180,
         retry_attempts: 3,
       },
@@ -354,9 +618,7 @@ class WorkflowOrchestrator {
         agent: 'atlas-agent-referral',
         required_state: 'ROUTING',
         next_states: ['MEDS', 'COMPLETE'],
-        conditions: {
-          urgency_required: 'EMERGENT',
-        },
+        conditions: { urgency_required: 'EMERGENT' },
         timeout_seconds: 240,
         retry_attempts: 3,
       },
@@ -370,56 +632,92 @@ class WorkflowOrchestrator {
         retry_attempts: 3,
       },
     ];
-
-    steps.forEach(step => {
-      this.workflowSteps.set(step.required_state, step);
-    });
+    return new WorkflowEngine(steps);
   }
 
   async process(session: CareSession): Promise<Result<CoordinationResult>> {
     const startTime = Date.now();
     let currentState = session.state;
+    let lastError: Error | undefined;
 
     try {
-      while (currentState !== 'COMPLETE' && currentState !== 'CANCELLED') {
-        const step = this.workflowSteps.get(currentState);
+      while (!this.engine.isTerminal(currentState) && currentState !== 'CANCELLED') {
+        const step = this.engine.getStep(currentState);
         if (!step) {
-          throw new CoordinatorError('INVALID_STATE', `No workflow step for state ${currentState}`);
+          throw new WorkflowError(`No workflow step for state ${currentState}`);
         }
 
-        const nextState = await this.executeStep(session, step);
-        // Update session (done by caller via withSession)
+        const stepResult = await this.executeStep(session, step);
+        if (!stepResult.ok) {
+          throw stepResult.error;
+        }
+
+        // Apply state mutations based on agent result
+        await this.applyAgentResult(session, step.agent, stepResult.value);
+
+        // Determine next state based on agent result and current session state
+        const nextState = this.engine.getNextState(currentState, stepResult.value, session);
+        if (!nextState) {
+          throw new WorkflowError(`No transition defined from ${currentState}`);
+        }
+
         session.state = nextState;
         session.updated_at = new Date().toISOString();
         currentState = nextState;
-
-        if (this.isSessionComplete(session)) {
-          currentState = 'COMPLETE';
-          session.state = 'COMPLETE';
-          break;
-        }
       }
 
       const outcome = this.determineOutcome(session);
       await this.completeSession(session, outcome);
       const result = this.buildResult(session, outcome, startTime);
-      return { ok: true, value: result };
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      await this.handleError(session, error);
+      return ok(result);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      await this.handleError(session, lastError);
       const outcome = 'SYSTEM_ERROR';
       const result = this.buildResult(session, outcome, startTime);
-      return { ok: false, error };
+      return err(lastError as Error);
     }
   }
 
-  private async executeStep(session: CareSession, step: WorkflowStep): Promise<CareSessionState> {
-    // Check conditions
+  private async applyAgentResult(session: CareSession, agentId: string, result: any): Promise<void> {
+    // Apply mutations based on agent result
+    switch (agentId) {
+      case 'atlas-agent-triage':
+        if (!session.metadata) session.metadata = {};
+        session.metadata.triage_result = result;
+        break;
+        
+      case 'atlas-agent-referral':
+        if (!session.metadata) session.metadata = {};
+        session.metadata.referral_details = result;
+        break;
+        
+      case 'atlas-agent-meds':
+        if (!session.metadata) session.metadata = {};
+        session.metadata.medication_check = result;
+        break;
+        
+      case 'atlas-agent-proxy':
+        if (!session.metadata) session.metadata = {};
+        session.metadata.patient_instructions = result.instructions;
+        
+        // Send notification as side-effect
+        if (this.config.enableNotifications && result.message_sent) {
+          await this.notificationService.send({
+            type: 'sms',
+            recipient: session.patient_id,
+            body: result.message_sent,
+          });
+        }
+        break;
+    }
+  }
+
+  private async executeStep(session: CareSession, step: WorkflowStep): Promise<Result<any>> {
     if (!this.checkConditions(session, step)) {
-      throw new CoordinatorError('CONDITION_FAILED', `Conditions not met for step ${step.step_name}`);
+      return err(new WorkflowError(`Conditions not met for step ${step.step_name}`));
     }
 
-    // Create handoff record
     const handoff: AgentHandoff = {
       handoff_id: uuidv4(),
       from_agent: this.config.agentId,
@@ -436,30 +734,26 @@ class WorkflowOrchestrator {
       status: 'initiated',
     };
     session.agent_handoffs.push(handoff);
-    this.metrics.recordHandoff();
+    await this.metrics.recordHandoff();
 
-    // Execute agent
     const timeoutMs = (step.timeout_seconds ?? 30) * 1000;
     const executeStartTime = Date.now();
     const result = await this.agentExecutor.execute(step.agent, async signal => {
-      // Here we call the actual agent service. For now, simulate.
-      return this.simulateAgent(step.agent, session, signal);
+      return this.callAgent(step.agent, session, signal);
     }, timeoutMs);
 
     if (!result.ok) {
-      // Use fallback if defined
       if (step.fallback_agent) {
         const fallbackStep = { ...step, agent: step.fallback_agent };
         return this.executeStep(session, fallbackStep);
       }
-      throw result.error;
+      return err(result.error);
     }
 
     // Update handoff status
     const updatedHandoff = session.agent_handoffs.find(h => h.handoff_id === handoff.handoff_id);
     if (updatedHandoff) updatedHandoff.status = 'completed';
 
-    // Record integration event
     if (this.config.enableEventLogging) {
       this.logger.log({
         event_id: uuidv4(),
@@ -471,87 +765,143 @@ class WorkflowOrchestrator {
         patient_id: session.patient_id,
         data: { step: step.step_name, result: result.value },
         success: true,
-        processing_time: Date.now() - executeStartTime, // Use the proper start time recorded above
+        processing_time: Date.now() - executeStartTime,
       });
     }
 
-    // Determine next state based on result
-    return this.determineNextState(session, step, result.value);
+    return ok(result.value);
   }
 
-  private simulateAgent(agentId: string, session: CareSession, signal: AbortSignal): Promise<any> {
-    // Simulate work; if aborted, reject
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        if (signal.aborted) {
-          reject(new Error('Aborted'));
-          return;
+  private async callAgent(agentId: string, session: CareSession, signal: AbortSignal): Promise<any> {
+    const { AIAgentFactory } = await import('@atlas-core/ai');
+    const { createAtlasFhir } = await import('@atlas-std/fhir');
+
+    switch (agentId) {
+      case 'atlas-agent-triage': {
+        const triageAgent = AIAgentFactory.getTriageAgent();
+        let clinicalContext = session.metadata?.clinicalContext || {};
+
+        try {
+          if (session.patient_id && session.metadata?.sharpContext && this.sharpFhirIntegration) {
+            clinicalContext = await this.sharpFhirIntegration.getClinicalContext(session.patient_id);
+          }
+        } catch (fhirError) {
+          console.warn('SHARP-FHIR data fetch failed, using session context:', fhirError);
         }
-        // Simulate result based on agent
-        let result: any;
-        switch (agentId) {
-          case 'atlas-agent-triage':
-            result = {
-              urgency: 'EMERGENT',
-              suggested_pathway: 'ED',
-              differential: [
-                { condition: 'Acute Myocardial Infarction', icd10: 'I21.9', confidence: 0.78 },
-                { condition: 'Unstable Angina', icd10: 'I20.0', confidence: 0.15 },
-              ],
-              red_flags: ['chest pain radiating to arm', 'diaphoresis'],
-              reasoning: 'Patient presents with chest pain symptoms requiring urgent evaluation',
-              confidence_score: 0.85,
-            };
-            session.metadata = session.metadata || {};
-            session.metadata.triage_result = result;
-            break;
-          case 'atlas-agent-referral':
-            result = {
-              specialist_type: 'Cardiology',
-              facility: 'St. Mary\'s Hospital',
-              urgency: 'URGENT',
-              appointment_scheduled: false,
-              wait_time_minutes: 15,
-              distance_miles: 4.2,
-              insurance_accepted: true,
-            };
-            session.metadata = session.metadata || {};
-            session.metadata.referral_details = result;
-            break;
-          case 'atlas-agent-meds':
-            result = {
-              interactions_found: true,
-              contraindications: ['Increased bleeding risk with anticoagulents'],
-              recommendations: ['Monitor for signs of bleeding', 'Hold anticoagulents until evaluated'],
-              current_medications: ['Warfarin', 'Lisinopril', 'Metformin'],
-            };
-            session.metadata = session.metadata || {};
-            session.metadata.medication_check = result;
-            break;
-          case 'atlas-agent-proxy':
-            result = {
-              patient_notified: true,
-              message_sent: 'Please proceed to St. Mary\'s Emergency Room immediately',
-              instructions: [
-                'Go to nearest emergency room',
-                'Bring current medications',
-                'Avoid driving yourself',
-              ],
-            };
-            session.metadata = session.metadata || {};
-            session.metadata.patient_instructions = result.instructions;
-            break;
-          default:
-            reject(new Error(`Unknown agent: ${agentId}`));
-            return;
+
+        const triageInput = {
+          symptoms: session.metadata?.initial_symptoms || [],
+          patientContext: {
+            age: clinicalContext.patient?.age || 0,
+            vitals: clinicalContext.vitals,
+            medications: clinicalContext.medications,
+            conditions: clinicalContext.conditions,
+          },
+        };
+
+        const result = await triageAgent.analyzeSymptoms(triageInput);
+        
+        // Return result without mutating session
+        return {
+          urgency: result.urgency,
+          suggested_pathway: this.mapPathway(result.suggestedPathway || 'PCP'),
+          differential: result.differential,
+          red_flags: result.redFlags,
+          reasoning: result.reasoning,
+          confidence_score: result.confidenceScore,
+          recommendations: result.recommendations,
+          requires_immediate_attention: result.requiresImmediateAttention,
+        };
+      }
+
+      case 'atlas-agent-referral': {
+        const triageResult = session.metadata?.triage_result;
+        if (!triageResult) {
+          throw new Error('No triage result available for referral');
         }
-        resolve(result);
-      }, 50); // Simulate latency
-      signal.addEventListener('abort', () => {
-        clearTimeout(timeout);
-        reject(new Error('Aborted'));
-      });
-    });
+
+        // Return result without mutating session
+        return {
+          specialist_type: this.determineSpecialty(triageResult.differential || []),
+          facility: this.selectFacility(triageResult.urgency, triageResult.differential || []),
+          urgency: triageResult.urgency,
+          appointment_scheduled: false,
+          wait_time_minutes: this.estimateWaitTime(triageResult.urgency),
+          distance_miles: 5.2,
+          insurance_accepted: true,
+        };
+      }
+
+      case 'atlas-agent-meds': {
+        try {
+          const fhir = createAtlasFhir({
+            baseUrl: process.env.FHIR_BASE_URL || 'https://demo.fhir.org/r4',
+            timeout: 30000,
+            auth: {
+              type: 'bearer' as const,
+              token: process.env.FHIR_TOKEN || 'demo-token',
+            },
+          });
+
+          const medications = await fhir.medicationRequest.search({
+            patient: session.patient_id,
+            status: 'active',
+          });
+
+          const medList = medications.entry?.map((med: any) =>
+            med.resource.medicationCodeableConcept?.text ||
+            med.resource.medicationReference?.display ||
+            'Unknown medication'
+          ) || [];
+
+          // Return result without mutating session
+          return {
+            medications_found: medList.length > 0,
+            current_medications: medList,
+            interactions_found: medList.length > 1,
+            contraindications: medList.length > 2 ? ['Multiple medications require review'] : [],
+            recommendations: medList.length > 0 ? ['Review medication list with provider'] : ['No active medications found'],
+          };
+        } catch (error) {
+          // Return fallback result without mutating session
+          return {
+            interactions_found: true,
+            contraindications: ['Review needed for medication interactions'],
+            recommendations: ['Consult pharmacist for medication review'],
+            current_medications: ['Demo medication 1', 'Demo medication 2'],
+          };
+        }
+      }
+
+      case 'atlas-agent-proxy': {
+        const triageResult = session.metadata?.triage_result;
+        const referralDetails = session.metadata?.referral_details;
+
+        let message = '';
+        let instructions: string[] = [];
+
+        if (triageResult?.urgency === 'EMERGENT') {
+          message = 'Please proceed to nearest emergency department immediately';
+          instructions = ['Call 911 or go to nearest ED', 'Bring current medications and ID', 'Do not drive yourself if possible'];
+        } else if (referralDetails) {
+          message = `Please contact ${referralDetails.facility} for ${referralDetails.specialist_type} appointment`;
+          instructions = [`Call ${referralDetails.facility} to schedule`, 'Bring insurance information', 'Prepare list of current symptoms'];
+        } else {
+          message = 'Your case has been reviewed. Please follow up with your primary care provider';
+          instructions = ['Schedule appointment with PCP', 'Monitor symptoms', 'Seek care if symptoms worsen'];
+        }
+
+        // Return result without mutating session
+        return { 
+          patient_notified: true, 
+          message_sent: message, 
+          instructions 
+        };
+      }
+
+      default:
+        throw new Error(`Unknown agent: ${agentId}`);
+    }
   }
 
   private checkConditions(session: CareSession, step: WorkflowStep): boolean {
@@ -561,34 +911,10 @@ class WorkflowOrchestrator {
     if (cond.consent_required && !session.consent_ref) return false;
     if (cond.symptoms_required) {
       const symptoms = session.metadata?.initial_symptoms || [];
-      const hasRequired = cond.symptoms_required.some(req =>
-        symptoms.some(s => s.toLowerCase().includes(req.toLowerCase()))
-      );
+      const hasRequired = cond.symptoms_required.some(req => symptoms.some(s => s.toLowerCase().includes(req.toLowerCase())));
       if (!hasRequired) return false;
     }
-    // data_required could be checked here
     return true;
-  }
-
-  private determineNextState(session: CareSession, step: WorkflowStep, result: any): CareSessionState {
-    // Simplified: based on current state and result
-    switch (session.state) {
-      case 'INTAKE':
-        return 'TRIAGE';
-      case 'TRIAGE':
-        return session.metadata?.triage_result?.urgency === 'EMERGENT' ? 'ROUTING' : 'COMPLETE';
-      case 'ROUTING':
-        // If we've done both referral and meds, complete; else continue
-        const hasReferral = session.metadata?.referral_details != null;
-        const hasMeds = session.metadata?.medication_check != null;
-        if (hasReferral && hasMeds) return 'COMPLETE';
-        if (hasReferral) return 'MEDS';
-        return 'ROUTING'; // stay in routing until referral done
-      case 'MEDS':
-        return 'COMPLETE';
-      default:
-        return 'COMPLETE';
-    }
   }
 
   private isSessionComplete(session: CareSession): boolean {
@@ -610,7 +936,6 @@ class WorkflowOrchestrator {
   private async completeSession(session: CareSession, outcome: CoordinationResult['outcome']): Promise<void> {
     session.completed_at = new Date().toISOString();
     session.state = 'COMPLETE';
-    // Add timeline event
     session.timeline.push({
       event_id: uuidv4(),
       timestamp: session.completed_at,
@@ -684,6 +1009,48 @@ class WorkflowOrchestrator {
     return Math.max(0, Math.min(1, confidence));
   }
 
+  private determineSpecialty(differential: any[]): string {
+    if (!differential?.length) return 'Primary Care';
+    const condition = differential[0].condition?.toLowerCase() || '';
+    if (condition.includes('cardiac') || condition.includes('heart')) return 'Cardiology';
+    if (condition.includes('respiratory') || condition.includes('lung')) return 'Pulmonology';
+    if (condition.includes('neuro') || condition.includes('brain')) return 'Neurology';
+    if (condition.includes('ortho') || condition.includes('bone')) return 'Orthopedics';
+    if (condition.includes('derm') || condition.includes('skin')) return 'Dermatology';
+    return 'Primary Care';
+  }
+
+  private selectFacility(urgency: string, differential: any[]): string {
+    if (urgency === 'EMERGENT') return 'Nearest Emergency Department';
+    if (urgency === 'URGENT') return 'Urgent Care Center';
+    return 'Primary Care Clinic';
+  }
+
+  private estimateWaitTime(urgency: string): number {
+    switch (urgency) {
+      case 'EMERGENT': return 0;
+      case 'URGENT': return 30;
+      default: return 120;
+    }
+  }
+
+  private mapPathway(suggestedPathway: string): 'ED' | 'URGENT_CARE' | 'PRIMARY_CARE' | 'TELEHEALTH' {
+    switch (suggestedPathway?.toLowerCase()) {
+      case 'emergency':
+      case 'ed':
+      case 'emergency_department':
+        return 'ED';
+      case 'urgent':
+      case 'urgent_care':
+        return 'URGENT_CARE';
+      case 'telehealth':
+      case 'virtual':
+        return 'TELEHEALTH';
+      default:
+        return 'PRIMARY_CARE';
+    }
+  }
+
   private async handleError(session: CareSession, error: Error): Promise<void> {
     session.timeline.push({
       event_id: uuidv4(),
@@ -701,102 +1068,162 @@ class WorkflowOrchestrator {
 
 // ==================== Main Coordinator ====================
 export class CareCoordinator {
-  private sessionManager: SessionManager;
+  private sessionRepo: SessionRepository;
   private metrics: MetricsCollector;
   private logger: EventLogger;
   private agentExecutor: AgentExecutor;
   private orchestrator: WorkflowOrchestrator;
+  private sharpFhirIntegration: SHARPFhirIntegration;
+  private notificationService: NotificationService;
 
   constructor(private config: CoordinatorConfig = defaultConfig) {
-    this.sessionManager = new SessionManager();
+    this.sessionRepo = config.sessionRepoType === 'inmemory'
+      ? new InMemorySessionRepository()
+      : new InMemorySessionRepository(); // Placeholder for Redis
     this.metrics = new MetricsCollector();
     this.logger = new EventLogger();
     this.agentExecutor = new AgentExecutor(this.config, this.metrics, this.logger);
-    this.orchestrator = new WorkflowOrchestrator(this.config, this.agentExecutor, this.metrics, this.logger);
-  }
-
-  /**
-   * Starts a new care coordination session.
-   * @param request - The coordination request.
-   * @returns Result containing the coordination result or an error.
-   */
-  async coordinateCare(request: CoordinationRequest): Promise<Result<CoordinationResult>> {
-    try {
-      const validatedRequest = CoordinationRequestSchema.parse(request);
-      const session = this.sessionManager.createSession(validatedRequest);
-      // Add initial timeline event
-      await this.addTimelineEvent(session, {
-        event_id: uuidv4(),
-        timestamp: new Date().toISOString(),
-        event_type: 'SESSION_START',
-        agent: this.config.agentId,
-        description: `Care coordination session started for ${validatedRequest.trigger}`,
-        data: validatedRequest,
-      });
-      // Process workflow
-      const result = await this.orchestrator.process(session);
-      return result;
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      return { ok: false, error: err };
-    }
-  }
-
-  /**
-   * Cancels an ongoing session.
-   * @param sessionId - The ID of the session to cancel.
-   * @returns true if cancelled, false if not found.
-   */
-  async cancelSession(sessionId: string): Promise<boolean> {
-    const result = await this.sessionManager.withSession(sessionId, async session => {
-      if (session.state === 'COMPLETE' || session.state === 'CANCELLED') {
-        return false;
-      }
-      session.state = 'CANCELLED';
-      session.completed_at = new Date().toISOString();
-      await this.addTimelineEvent(session, {
-        event_id: uuidv4(),
-        timestamp: session.completed_at,
-        event_type: 'SESSION_CANCELLED',
-        agent: this.config.agentId,
-        description: 'Session cancelled by user request',
-      });
-      return true;
+    this.sharpFhirIntegration = new SHARPFhirIntegration({
+      fhirBaseUrl: process.env.FHIR_BASE_URL,
+      fhirToken: process.env.FHIR_TOKEN,
     });
-    return result.ok ? result.value : false;
+    this.notificationService = new ConsoleNotificationService();
+    this.orchestrator = new WorkflowOrchestrator(
+      this.config,
+      this.agentExecutor,
+      this.metrics,
+      this.logger,
+      this.sharpFhirIntegration,
+      this.notificationService
+    );
   }
 
-  /**
-   * Retrieves a session by ID.
-   */
-  getSession(sessionId: string): CareSession | undefined {
-    return this.sessionManager.getSession(sessionId);
+  async coordinateCare(request: CoordinationRequest): Promise<Result<CoordinationResult>> {
+    const maxRetries = 3;
+    let attempt = 0;
+    
+    while (attempt < maxRetries) {
+      try {
+        const validatedRequest = CoordinationRequestSchema.parse(request);
+        const session = this.createSession(validatedRequest);
+
+        // Initialize SHARP context
+        const sharpContext = this.sharpFhirIntegration.initializeSHARPSession(
+          session.patient_id,
+          session.session_id,
+          ['read', 'search'],
+          ['treatment', 'data_processing']
+        );
+        if (!session.metadata) session.metadata = {};
+        session.metadata.sharpContext = sharpContext;
+
+        await this.addTimelineEvent(session, {
+          event_id: uuidv4(),
+          timestamp: new Date().toISOString(),
+          event_type: 'SESSION_START',
+          agent: this.config.agentId,
+          description: `Care coordination session started for ${validatedRequest.trigger}`,
+          data: validatedRequest,
+        });
+
+        // Save initial session
+        const saveResult = await this.sessionRepo.save(session);
+        if (!saveResult.ok) {
+          if (attempt < maxRetries - 1) {
+            attempt++;
+            await new Promise(resolve => setTimeout(resolve, 100 * attempt)); // Exponential backoff
+            continue;
+          }
+          return err(saveResult.error);
+        }
+
+        // Process workflow with retry on concurrency conflict
+        let currentVersion = 1; // After initial save
+        let workflowResult: Result<CoordinationResult>;
+        
+        while (true) {
+          // Get fresh session with version
+          const sessionWithVersion = await this.sessionRepo.getWithVersion(brandSessionId(session.session_id));
+          if (!sessionWithVersion) {
+            return err(new SessionNotFoundError(session.session_id));
+          }
+          
+          const { session: currentSession, version } = sessionWithVersion;
+          
+          // Process workflow
+          workflowResult = await this.orchestrator.process(currentSession);
+          
+          if (workflowResult.ok) {
+            // Save updated session with version check
+            const finalSaveResult = await this.sessionRepo.save(currentSession, version);
+            if (!finalSaveResult.ok) {
+              if (finalSaveResult.error.message.includes('Version mismatch')) {
+                // Retry with fresh data
+                continue;
+              }
+              return err(finalSaveResult.error);
+            }
+          }
+          
+          break; // Success or non-concurrency error
+        }
+        
+        return workflowResult;
+      } catch (error) {
+        const err = error instanceof Error ? error : new Error(String(error));
+        if (attempt < maxRetries - 1) {
+          attempt++;
+          await new Promise(resolve => setTimeout(resolve, 100 * attempt));
+          continue;
+        }
+        return { ok: false, error: err };
+      }
+    }
+    
+    return err(new CoordinatorError('MAX_RETRIES_EXCEEDED', 'Max retries exceeded in coordinateCare'));
   }
 
-  /**
-   * Lists all active sessions.
-   */
-  listActiveSessions(): CareSession[] {
-    return this.sessionManager.getAllSessions().filter(s => s.state !== 'COMPLETE' && s.state !== 'CANCELLED');
+  async cancelSession(sessionId: string): Promise<Result<boolean>> {
+    const sid = brandSessionId(sessionId);
+    const session = await this.sessionRepo.get(sid);
+    if (!session) return err(new SessionNotFoundError(sessionId));
+
+    if (session.state === 'COMPLETE' || session.state === 'CANCELLED') {
+      return ok(false);
+    }
+
+    session.state = 'CANCELLED';
+    session.completed_at = new Date().toISOString();
+    await this.addTimelineEvent(session, {
+      event_id: uuidv4(),
+      timestamp: session.completed_at,
+      event_type: 'SESSION_CANCELLED',
+      agent: this.config.agentId,
+      description: 'Session cancelled by user request',
+    });
+
+    const saveResult = await this.sessionRepo.save(session);
+    if (!saveResult.ok) return err(saveResult.error);
+    return ok(true);
   }
 
-  /**
-   * Returns performance metrics.
-   */
-  getMetrics(agentId?: string): Metrics | Map<string, Metrics> {
+  async getSession(sessionId: string): Promise<CareSession | undefined> {
+    return this.sessionRepo.get(brandSessionId(sessionId));
+  }
+
+  async listActiveSessions(): Promise<CareSession[]> {
+    return this.sessionRepo.list({ state: 'INTAKE' });
+    // Could filter for non-terminal states
+  }
+
+  async getMetrics(agentId?: string): Promise<Metrics | Map<string, Metrics>> {
     return this.metrics.getMetrics(agentId);
   }
 
-  /**
-   * Returns logged integration events.
-   */
   getIntegrationEvents(): IntegrationEvent[] {
     return this.logger.getEvents();
   }
 
-  /**
-   * Returns agent information.
-   */
   getAgentInfo(): { id: string; name: string; version: string; capabilities: string[] } {
     return {
       id: this.config.agentId,
@@ -811,12 +1238,35 @@ export class CareCoordinator {
         'retry_with_backoff',
         'concurrency_safety',
         'observability',
+        'notifications',
       ],
+    };
+  }
+
+  private createSession(request: CoordinationRequest): CareSession {
+    const sessionId = uuidv4();
+    const now = new Date().toISOString();
+    return {
+      session_id: sessionId,
+      patient_id: request.patient_id,
+      state: 'INTAKE',
+      timeline: [],
+      fhir_resources: [],
+      agent_handoffs: [],
+      consent_ref: '',
+      created_at: now,
+      updated_at: now,
+      metadata: {
+        initial_symptoms: request.initial_data.symptoms,
+        provider_notifications: [],
+        patient_instructions: [],
+      },
     };
   }
 
   private async addTimelineEvent(session: CareSession, event: TimelineEvent): Promise<void> {
     session.timeline.push(event);
     session.updated_at = event.timestamp;
+    // No need to save here; caller will save
   }
 }

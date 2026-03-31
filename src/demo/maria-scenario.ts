@@ -1,67 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-// import { createAtlasFhir as createAtlasFhirUntyped } from '@atlas-std/fhir';
-// Using local implementation instead due to build issues
-const createAtlasFhirUntyped = () => ({
-  async readPatient() {
-    return { id: 'test-patient', name: 'Test Patient' };
-  },
-  async readConditions() {
-    return [];
-  },
-  async readMedications() {
-    return [];
-  }
-});
-// import { createConsentEngine as createConsentEngineUntyped } from '@atlas-tool/consent';
-// Using local implementation instead due to build issues
-const createConsentEngineUntyped = () => ({
-  createDefaultConsentPolicy(patientId: string, ownerType: string) {
-    return { 
-      id: randomUUID(),
-      patientId,
-      ownerType,
-      scope: 'TRIAGE',
-      granted: true
-    };
-  },
-  createConsentPolicy(policy: any) {
-    return { ...policy, id: randomUUID() };
-  },
-  async verifyConsent(request: any) {
-    return { allowed: true, scope: 'TRIAGE' };
-  }
-});
-
-// import { createAuditLogger as createAuditLoggerUntyped } from '@atlas-tool/audit';
-// Using local implementation instead due to build issues
-const createAuditLoggerUntyped = () => ({
-  async logAccess(entry: any) {
-    console.log('AUDIT ACCESS:', entry);
-  },
-  async logEvent(event: any) {
-    console.log('AUDIT EVENT:', event);
-    return { id: randomUUID(), timestamp: new Date().toISOString() };
-  },
-  async getEvents() {
-    return [];
-  },
-  async queryEvents(query: any) {
-    return [];
-  },
-  async validateChain() {
-    return { valid: true };
-  },
-  async createHipaaComplianceReport() {
-    return {
-      reportId: randomUUID(),
-      timestamp: new Date().toISOString(),
-      compliant: true,
-      summary: 'HIPAA compliance verified'
-    };
-  }
-});
+// Import real ATLAS modules
+import { createAtlasFhir } from '@atlas-std/fhir';
+import { createConsentEngine } from '@atlas-tool/consent';
+import { createAuditLogger } from '@atlas-tool/audit';
+import { createPatientProxyAgent } from '@atlas-agent/proxy';
+import { createTriageAgent } from '@atlas-agent/triage';
 
 // import { createIdentityBridge as createIdentityBridgeUntyped } from '@atlas-tool/identity';
 // Using local implementation instead due to build issues
@@ -70,38 +15,6 @@ const createIdentityBridgeUntyped = () => ({
     return { token: 'test-token', expiresAt: new Date() };
   }
 });
-
-// import { createTriageAgent as createTriageAgentUntyped } from '@atlas-agent/triage';
-// Using local implementation instead due to build issues
-const createTriageAgentUntyped = () => ({
-  async assessTriage() {
-    return {
-      urgency: 'ROUTINE',
-      pathway: 'TELEHEALTH',
-      confidence: 0.8,
-      reasoning: 'Routine assessment',
-      recommendations: ['Schedule telehealth']
-    };
-  }
-});
-
-// import { createPatientProxyAgent as createPatientProxyAgentUntyped } from '@atlas-agent/proxy';
-// Using local implementation instead due to build issues
-const createPatientProxyAgentUntyped = () => ({
-  async processMessage(message: any) {
-    return { 
-      content: 'Patient reports chest pain and sweating',
-      processed: true, 
-      symptoms: ['chest pain', 'sweating'],
-      originalMessage: message 
-    };
-  },
-  async processInput() {
-    return { processed: true, symptoms: ['mild cough'] };
-  }
-});
-// import { createCareCoordinator as createCareCoordinatorUntyped } from '@atlas-agent/coordinator';
-// Using local implementation instead
 
 type MaybePromise<T> = T | Promise<T>;
 
@@ -485,14 +398,13 @@ type CreateTriageAgentFactory = () => TriageAgent;
 type CreatePatientProxyAgentFactory = () => PatientProxyAgent;
 type CreateCareCoordinatorFactory = () => CareCoordinator;
 
-const createAtlasFhir = createAtlasFhirUntyped as unknown as CreateAtlasFhirFactory;
-const createConsentEngine = createConsentEngineUntyped as unknown as CreateConsentEngineFactory;
-const createAuditLogger = createAuditLoggerUntyped as unknown as CreateAuditLoggerFactory;
+const createAtlasFhirImpl = createAtlasFhir;
+const createConsentEngineImpl = createConsentEngine;
+const createAuditLoggerImpl = createAuditLogger;
 const createIdentityBridge =
   createIdentityBridgeUntyped as unknown as CreateIdentityBridgeFactory;
-const createTriageAgent = createTriageAgentUntyped as unknown as CreateTriageAgentFactory;
-const createPatientProxyAgent =
-  createPatientProxyAgentUntyped as unknown as CreatePatientProxyAgentFactory;
+const createTriageAgentImpl = createTriageAgent;
+const createPatientProxyAgentImpl = createPatientProxyAgent;
 const createCareCoordinator = (() => {
   // Local implementation since @atlas-agent/coordinator has import issues
   return () => ({
@@ -1208,15 +1120,15 @@ function resolveOptions(options: MariaScenarioOptions = {}): ResolvedMariaScenar
 
 function createDefaultDependencies(fhirConfig: FhirConfig): AtlasDependencies {
   return {
-    fhirClient: createAtlasFhir(fhirConfig),
-    consentEngine: createConsentEngine(),
-    auditLogger: createAuditLogger({
+    fhirClient: createAtlasFhirImpl(fhirConfig),
+    consentEngine: createConsentEngineImpl(),
+    auditLogger: createAuditLoggerImpl({
       systemId: 'atlas-demo',
       environment: 'demo',
     }),
     identityBridge: createIdentityBridge(),
-    triageAgent: createTriageAgent(),
-    proxyAgent: createPatientProxyAgent(),
+    triageAgent: createTriageAgentImpl(),
+    proxyAgent: createPatientProxyAgentImpl(),
     coordinator: createCareCoordinator(),
   };
 }
@@ -1612,6 +1524,9 @@ export class MariaMondayScenarioRunner {
     this.reporter.success('FHIR resources created and managed');
     this.reporter.success('Consent verified and respected');
     this.reporter.success('Multi-agent coordination successful');
+    this.reporter.line('  • Agent Routing: Referral & Proxy agents use deterministic routing for predictable outcomes');
+    this.reporter.line('  • Data Storage: In-memory session storage (no persistent DB - suitable for hackathon demo)');
+    this.reporter.line('  • FHIR Access: Configured for demo.fhir.org - set FHIR_BASE_URL for live FHIR servers');
 
     this.reporter.line('\n🏆 ATLAS Framework Validation:');
     this.reporter.line('  📋 Core Infrastructure: ✅ OPERATIONAL');

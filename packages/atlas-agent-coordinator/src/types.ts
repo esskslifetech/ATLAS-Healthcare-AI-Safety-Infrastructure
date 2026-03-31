@@ -126,6 +126,8 @@ export const CareSessionSchema = z.object({
           medicalHistory: z.array(z.string()).optional(),
         })
         .optional(),
+      clinicalContext: z.any().optional(),
+      sharpContext: z.any().optional(),
       triage_result: z
         .object({
           urgency: UrgencySchema,

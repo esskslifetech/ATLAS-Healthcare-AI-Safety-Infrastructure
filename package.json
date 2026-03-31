@@ -64,8 +64,6 @@
     "packages/atlas-tool-audit",
     "packages/atlas-agent-coordinator",
     "packages/atlas-agent-triage",
-    "packages/atlas-agent-referral",
-    "packages/atlas-agent-meds",
     "packages/atlas-agent-proxy"
   ]
 }
