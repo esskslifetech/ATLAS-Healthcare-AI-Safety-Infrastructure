@@ -230,7 +230,7 @@ npx ts-node packages/atlas-mcp-consent/src/server.ts
 
 ---
 
-## 🎯 HAgents Assemble
+## 🎯 Agents Assemble
 
 ATLAS addresses the **"Healthcare AI Endgame"** head-on:
 
