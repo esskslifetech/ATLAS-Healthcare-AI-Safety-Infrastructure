@@ -254,6 +254,8 @@ export declare const CareSessionSchema: z.ZodObject<{
             allergies?: string[] | undefined;
             medicalHistory?: string[] | undefined;
         }>>;
+        clinicalContext: z.ZodOptional<z.ZodAny>;
+        sharpContext: z.ZodOptional<z.ZodAny>;
         triage_result: z.ZodOptional<z.ZodObject<{
             urgency: z.ZodEnum<["EMERGENT", "URGENT", "SEMI_URGENT", "ROUTINE"]>;
             suggested_pathway: z.ZodEnum<["ED", "URGENT_CARE", "PRIMARY_CARE", "TELEHEALTH"]>;
@@ -364,6 +366,8 @@ export declare const CareSessionSchema: z.ZodObject<{
             allergies?: string[] | undefined;
             medicalHistory?: string[] | undefined;
         } | undefined;
+        clinicalContext?: any;
+        sharpContext?: any;
         triage_result?: {
             urgency: "EMERGENT" | "URGENT" | "SEMI_URGENT" | "ROUTINE";
             suggested_pathway: "ED" | "URGENT_CARE" | "PRIMARY_CARE" | "TELEHEALTH";
@@ -414,6 +418,8 @@ export declare const CareSessionSchema: z.ZodObject<{
             allergies?: string[] | undefined;
             medicalHistory?: string[] | undefined;
         } | undefined;
+        clinicalContext?: any;
+        sharpContext?: any;
         triage_result?: {
             urgency: "EMERGENT" | "URGENT" | "SEMI_URGENT" | "ROUTINE";
             suggested_pathway: "ED" | "URGENT_CARE" | "PRIMARY_CARE" | "TELEHEALTH";
@@ -498,6 +504,8 @@ export declare const CareSessionSchema: z.ZodObject<{
             allergies?: string[] | undefined;
             medicalHistory?: string[] | undefined;
         } | undefined;
+        clinicalContext?: any;
+        sharpContext?: any;
         triage_result?: {
             urgency: "EMERGENT" | "URGENT" | "SEMI_URGENT" | "ROUTINE";
             suggested_pathway: "ED" | "URGENT_CARE" | "PRIMARY_CARE" | "TELEHEALTH";
@@ -582,6 +590,8 @@ export declare const CareSessionSchema: z.ZodObject<{
             allergies?: string[] | undefined;
             medicalHistory?: string[] | undefined;
         } | undefined;
+        clinicalContext?: any;
+        sharpContext?: any;
         triage_result?: {
             urgency: "EMERGENT" | "URGENT" | "SEMI_URGENT" | "ROUTINE";
             suggested_pathway: "ED" | "URGENT_CARE" | "PRIMARY_CARE" | "TELEHEALTH";
