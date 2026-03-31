@@ -2,10 +2,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import { Mutex } from 'async-mutex';
-<<<<<<< HEAD
 import { SHARPFhirIntegration } from './sharp-fhir-integration';
-=======
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
 import {
   CareSession,
   CareSessionState,
@@ -43,12 +40,9 @@ export interface CoordinatorConfig {
   circuitBreakerTimeoutMs: number;
   enableMetrics: boolean;
   enableEventLogging: boolean;
-<<<<<<< HEAD
   enableNotifications: boolean;
   sessionRepoType: 'inmemory' | 'redis';
   redisUrl?: string;
-=======
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
 }
 
 const defaultConfig: CoordinatorConfig = {
@@ -60,7 +54,6 @@ const defaultConfig: CoordinatorConfig = {
   circuitBreakerTimeoutMs: 60_000,
   enableMetrics: true,
   enableEventLogging: true,
-<<<<<<< HEAD
   enableNotifications: true,
   sessionRepoType: 'inmemory',
 };
@@ -92,10 +85,6 @@ export function isOk<T, E>(result: Result<T, E>): result is { ok: true; value: T
   return result.ok;
 }
 
-=======
-};
-
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
 // ==================== Error Types ====================
 export class CoordinatorError extends Error {
   constructor(
@@ -105,7 +94,6 @@ export class CoordinatorError extends Error {
   ) {
     super(message);
     this.name = 'CoordinatorError';
-<<<<<<< HEAD
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
@@ -202,15 +190,6 @@ class InMemorySessionRepository implements SessionRepository {
 }
 
 // ==================== Metrics Collector (Thread‑safe) ====================
-=======
-  }
-}
-
-// ==================== Result Type ====================
-export type Result<T, E = Error> = { ok: true; value: T } | { ok: false; error: E };
-
-// ==================== Metrics ====================
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
 interface Metrics {
   sessionCount: number;
   successCount: number;
@@ -222,7 +201,6 @@ interface Metrics {
 }
 
 class MetricsCollector {
-<<<<<<< HEAD
   private metrics = new Map<string, Metrics>();
   private lock = new Mutex();
 
@@ -276,51 +254,6 @@ class MetricsCollector {
     } finally {
       release();
     }
-=======
-  private metrics: Map<string, Metrics> = new Map();
-
-  recordSession(agentId: string, durationMs: number, success: boolean, error?: string): void {
-    const key = agentId;
-    const current = this.metrics.get(key) ?? {
-      sessionCount: 0,
-      successCount: 0,
-      failureCount: 0,
-      averageDurationMs: 0,
-      handoffCount: 0,
-      errorCount: 0,
-    };
-
-    current.sessionCount++;
-    if (success) {
-      current.successCount++;
-    } else {
-      current.failureCount++;
-      if (error) {
-        current.errorCount++;
-        current.lastError = error;
-      }
-    }
-    // Exponential moving average for duration
-    current.averageDurationMs =
-      (current.averageDurationMs * (current.sessionCount - 1) + durationMs) / current.sessionCount;
-
-    this.metrics.set(key, current);
-  }
-
-  recordHandoff(): void {
-    // Simple counter per agent; could be expanded
-    const key = 'global';
-    const current = this.metrics.get(key) ?? {
-      sessionCount: 0,
-      successCount: 0,
-      failureCount: 0,
-      averageDurationMs: 0,
-      handoffCount: 0,
-      errorCount: 0,
-    };
-    current.handoffCount++;
-    this.metrics.set(key, current);
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
   }
 
   getMetrics(agentId?: string): Metrics | Map<string, Metrics> {
@@ -334,29 +267,18 @@ class MetricsCollector {
         errorCount: 0,
       };
     }
-<<<<<<< HEAD
     return new Map(this.metrics);
   }
 }
 
 // ==================== Event Logger (Structured) ====================
-=======
-    return this.metrics;
-  }
-}
-
-// ==================== Event Logger ====================
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
 class EventLogger {
   private events: IntegrationEvent[] = [];
 
   log(event: IntegrationEvent): void {
     this.events.push(event);
     // In production, also send to external logging system
-<<<<<<< HEAD
     console.log(JSON.stringify({ level: 'info', ...event }));
-=======
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
   }
 
   getEvents(): IntegrationEvent[] {
@@ -364,7 +286,6 @@ class EventLogger {
   }
 }
 
-<<<<<<< HEAD
 // ==================== Notification Service (New Feature) ====================
 interface Notification {
   type: 'email' | 'sms' | 'push';
@@ -398,79 +319,6 @@ interface CircuitBreakerState {
 class AgentExecutor {
   private circuitBreakers = new Map<string, CircuitBreakerState>();
   private lock = new Mutex();
-=======
-// ==================== Session Manager ====================
-class SessionManager {
-  private sessions = new Map<string, CareSession>();
-  private locks = new Map<string, Mutex>();
-
-  async withSession<T>(
-    sessionId: string,
-    operation: (session: CareSession) => Promise<T>
-  ): Promise<Result<T>> {
-    const mutex = this.locks.get(sessionId) ?? new Mutex();
-    if (!this.locks.has(sessionId)) {
-      this.locks.set(sessionId, mutex);
-    }
-
-    const release = await mutex.acquire();
-    try {
-      const session = this.sessions.get(sessionId);
-      if (!session) {
-        return { ok: false, error: new CoordinatorError('NOT_FOUND', `Session ${sessionId} not found`) };
-      }
-      const result = await operation(session);
-      // Persist session after mutation (here we just store it)
-      this.sessions.set(sessionId, session);
-      return { ok: true, value: result };
-    } finally {
-      release();
-      // Clean up lock if session no longer exists
-      if (!this.sessions.has(sessionId)) {
-        this.locks.delete(sessionId);
-      }
-    }
-  }
-
-  createSession(request: CoordinationRequest): CareSession {
-    const sessionId = uuidv4();
-    const now = new Date().toISOString();
-    const session: CareSession = {
-      session_id: sessionId,
-      patient_id: request.patient_id,
-      state: 'INTAKE',
-      timeline: [],
-      fhir_resources: [],
-      agent_handoffs: [],
-      consent_ref: '',
-      created_at: now,
-      updated_at: now,
-      metadata: {
-        initial_symptoms: request.initial_data.symptoms,
-        provider_notifications: [],
-        patient_instructions: [],
-      },
-    };
-    this.sessions.set(sessionId, session);
-    return session;
-  }
-
-  getSession(sessionId: string): CareSession | undefined {
-    return this.sessions.get(sessionId);
-  }
-
-  getAllSessions(): CareSession[] {
-    return Array.from(this.sessions.values());
-  }
-}
-
-// ==================== Agent Executor (with retry, timeout, circuit breaker) ====================
-class AgentExecutor {
-  private circuitBreakers = new Map<
-    string,
-    { failures: number; lastFailureTime: number; state: 'CLOSED' | 'OPEN' | 'HALF_OPEN' }
-  >();
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
 
   constructor(
     private config: CoordinatorConfig,
@@ -483,7 +331,6 @@ class AgentExecutor {
     operation: (signal: AbortSignal) => Promise<T>,
     timeoutMs: number = this.config.defaultTimeoutMs
   ): Promise<Result<T>> {
-<<<<<<< HEAD
     const startTime = Date.now();
     let lastError: Error | undefined;
 
@@ -528,57 +375,11 @@ class AgentExecutor {
         const duration = Date.now() - startTime;
         await this.metrics.recordSession(agentId, duration, true);
         return ok(result);
-=======
-    // Circuit breaker check
-    const breaker = this.circuitBreakers.get(agentId) ?? {
-      failures: 0,
-      lastFailureTime: 0,
-      state: 'CLOSED',
-    };
-
-    if (breaker.state === 'OPEN') {
-      const now = Date.now();
-      if (now - breaker.lastFailureTime >= this.config.circuitBreakerTimeoutMs) {
-        breaker.state = 'HALF_OPEN';
-        this.circuitBreakers.set(agentId, breaker);
-      } else {
-        return {
-          ok: false,
-          error: new CoordinatorError('CIRCUIT_OPEN', `Circuit breaker open for agent ${agentId}`),
-        };
-      }
-    }
-
-    const startTime = Date.now();
-    let attempt = 0;
-    let lastError: Error | undefined;
-
-    while (attempt < this.config.retryAttempts) {
-      attempt++;
-      const abortController = new AbortController();
-      const timeoutId = setTimeout(() => abortController.abort(), timeoutMs);
-
-      try {
-        const result = await operation(abortController.signal);
-        clearTimeout(timeoutId);
-
-        // Success: reset circuit breaker if half-open or closed
-        if (breaker.state === 'HALF_OPEN') {
-          breaker.state = 'CLOSED';
-          breaker.failures = 0;
-          this.circuitBreakers.set(agentId, breaker);
-        }
-
-        const duration = Date.now() - startTime;
-        this.metrics.recordSession(agentId, duration, true);
-        return { ok: true, value: result };
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
       } catch (err) {
         clearTimeout(timeoutId);
         lastError = err instanceof Error ? err : new Error(String(err));
 
         // Record failure
-<<<<<<< HEAD
         await this.metrics.recordSession(agentId, Date.now() - startTime, false, lastError.message);
 
         // Circuit breaker failure tracking
@@ -603,27 +404,10 @@ class AgentExecutor {
         if (attempt < this.config.retryAttempts) {
           const delay = this.config.retryBackoffMs * Math.pow(2, attempt - 1);
           await new Promise(resolve => setTimeout(resolve, delay));
-=======
-        this.metrics.recordSession(agentId, Date.now() - startTime, false, lastError.message);
-
-        // Circuit breaker failure tracking
-        breaker.failures++;
-        breaker.lastFailureTime = Date.now();
-        if (breaker.failures >= this.config.circuitBreakerThreshold) {
-          breaker.state = 'OPEN';
-        }
-        this.circuitBreakers.set(agentId, breaker);
-
-        // Retry with exponential backoff
-        if (attempt < this.config.retryAttempts) {
-          const backoff = this.config.retryBackoffMs * Math.pow(2, attempt - 1);
-          await new Promise(resolve => setTimeout(resolve, backoff));
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
         }
       }
     }
 
-<<<<<<< HEAD
     return err(new CoordinatorError('AGENT_FAILURE', `Agent ${agentId} failed after ${this.config.retryAttempts} attempts`, lastError));
   }
 
@@ -793,24 +577,11 @@ class WorkflowEngine {
 class WorkflowOrchestrator {
   private engine: WorkflowEngine;
   private notificationService: NotificationService;
-=======
-    return {
-      ok: false,
-      error: new CoordinatorError('AGENT_FAILURE', `Agent ${agentId} failed after ${this.config.retryAttempts} attempts`, lastError),
-    };
-  }
-}
-
-// ==================== Workflow Orchestrator ====================
-class WorkflowOrchestrator {
-  private workflowSteps = new Map<CareSessionState, WorkflowStep>();
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
 
   constructor(
     private config: CoordinatorConfig,
     private agentExecutor: AgentExecutor,
     private metrics: MetricsCollector,
-<<<<<<< HEAD
     private logger: EventLogger,
     private sharpFhirIntegration?: SHARPFhirIntegration,
     notificationService?: NotificationService
@@ -820,14 +591,6 @@ class WorkflowOrchestrator {
   }
 
   private buildWorkflow(): WorkflowEngine {
-=======
-    private logger: EventLogger
-  ) {
-    this.initializeWorkflow();
-  }
-
-  private initializeWorkflow(): void {
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
     const steps: WorkflowStep[] = [
       {
         step_id: 'intake',
@@ -835,13 +598,7 @@ class WorkflowOrchestrator {
         agent: 'atlas-agent-proxy',
         required_state: 'INTAKE',
         next_states: ['TRIAGE'],
-<<<<<<< HEAD
         conditions: { symptoms_required: [] },
-=======
-        conditions: {
-          symptoms_required: [],
-        },
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
         timeout_seconds: 300,
         retry_attempts: 3,
       },
@@ -851,13 +608,7 @@ class WorkflowOrchestrator {
         agent: 'atlas-agent-triage',
         required_state: 'TRIAGE',
         next_states: ['ROUTING', 'COMPLETE'],
-<<<<<<< HEAD
         conditions: { symptoms_required: ['pain', 'fever', 'shortness of breath'] },
-=======
-        conditions: {
-          symptoms_required: ['pain', 'fever', 'shortness of breath'],
-        },
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
         timeout_seconds: 180,
         retry_attempts: 3,
       },
@@ -867,13 +618,7 @@ class WorkflowOrchestrator {
         agent: 'atlas-agent-referral',
         required_state: 'ROUTING',
         next_states: ['MEDS', 'COMPLETE'],
-<<<<<<< HEAD
         conditions: { urgency_required: 'EMERGENT' },
-=======
-        conditions: {
-          urgency_required: 'EMERGENT',
-        },
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
         timeout_seconds: 240,
         retry_attempts: 3,
       },
@@ -887,20 +632,12 @@ class WorkflowOrchestrator {
         retry_attempts: 3,
       },
     ];
-<<<<<<< HEAD
     return new WorkflowEngine(steps);
-=======
-
-    steps.forEach(step => {
-      this.workflowSteps.set(step.required_state, step);
-    });
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
   }
 
   async process(session: CareSession): Promise<Result<CoordinationResult>> {
     const startTime = Date.now();
     let currentState = session.state;
-<<<<<<< HEAD
     let lastError: Error | undefined;
 
     try {
@@ -927,33 +664,11 @@ class WorkflowOrchestrator {
         session.state = nextState;
         session.updated_at = new Date().toISOString();
         currentState = nextState;
-=======
-
-    try {
-      while (currentState !== 'COMPLETE' && currentState !== 'CANCELLED') {
-        const step = this.workflowSteps.get(currentState);
-        if (!step) {
-          throw new CoordinatorError('INVALID_STATE', `No workflow step for state ${currentState}`);
-        }
-
-        const nextState = await this.executeStep(session, step);
-        // Update session (done by caller via withSession)
-        session.state = nextState;
-        session.updated_at = new Date().toISOString();
-        currentState = nextState;
-
-        if (this.isSessionComplete(session)) {
-          currentState = 'COMPLETE';
-          session.state = 'COMPLETE';
-          break;
-        }
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
       }
 
       const outcome = this.determineOutcome(session);
       await this.completeSession(session, outcome);
       const result = this.buildResult(session, outcome, startTime);
-<<<<<<< HEAD
       return ok(result);
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
@@ -1003,25 +718,6 @@ class WorkflowOrchestrator {
       return err(new WorkflowError(`Conditions not met for step ${step.step_name}`));
     }
 
-=======
-      return { ok: true, value: result };
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      await this.handleError(session, error);
-      const outcome = 'SYSTEM_ERROR';
-      const result = this.buildResult(session, outcome, startTime);
-      return { ok: false, error };
-    }
-  }
-
-  private async executeStep(session: CareSession, step: WorkflowStep): Promise<CareSessionState> {
-    // Check conditions
-    if (!this.checkConditions(session, step)) {
-      throw new CoordinatorError('CONDITION_FAILED', `Conditions not met for step ${step.step_name}`);
-    }
-
-    // Create handoff record
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
     const handoff: AgentHandoff = {
       handoff_id: uuidv4(),
       from_agent: this.config.agentId,
@@ -1038,7 +734,6 @@ class WorkflowOrchestrator {
       status: 'initiated',
     };
     session.agent_handoffs.push(handoff);
-<<<<<<< HEAD
     await this.metrics.recordHandoff();
 
     const timeoutMs = (step.timeout_seconds ?? 30) * 1000;
@@ -1048,39 +743,17 @@ class WorkflowOrchestrator {
     }, timeoutMs);
 
     if (!result.ok) {
-=======
-    this.metrics.recordHandoff();
-
-    // Execute agent
-    const timeoutMs = (step.timeout_seconds ?? 30) * 1000;
-    const executeStartTime = Date.now();
-    const result = await this.agentExecutor.execute(step.agent, async signal => {
-      // Here we call the actual agent service. For now, simulate.
-      return this.simulateAgent(step.agent, session, signal);
-    }, timeoutMs);
-
-    if (!result.ok) {
-      // Use fallback if defined
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
       if (step.fallback_agent) {
         const fallbackStep = { ...step, agent: step.fallback_agent };
         return this.executeStep(session, fallbackStep);
       }
-<<<<<<< HEAD
       return err(result.error);
-=======
-      throw result.error;
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
     }
 
     // Update handoff status
     const updatedHandoff = session.agent_handoffs.find(h => h.handoff_id === handoff.handoff_id);
     if (updatedHandoff) updatedHandoff.status = 'completed';
 
-<<<<<<< HEAD
-=======
-    // Record integration event
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
     if (this.config.enableEventLogging) {
       this.logger.log({
         event_id: uuidv4(),
@@ -1092,7 +765,6 @@ class WorkflowOrchestrator {
         patient_id: session.patient_id,
         data: { step: step.step_name, result: result.value },
         success: true,
-<<<<<<< HEAD
         processing_time: Date.now() - executeStartTime,
       });
     }
@@ -1230,89 +902,6 @@ class WorkflowOrchestrator {
       default:
         throw new Error(`Unknown agent: ${agentId}`);
     }
-=======
-        processing_time: Date.now() - executeStartTime, // Use the proper start time recorded above
-      });
-    }
-
-    // Determine next state based on result
-    return this.determineNextState(session, step, result.value);
-  }
-
-  private simulateAgent(agentId: string, session: CareSession, signal: AbortSignal): Promise<any> {
-    // Simulate work; if aborted, reject
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        if (signal.aborted) {
-          reject(new Error('Aborted'));
-          return;
-        }
-        // Simulate result based on agent
-        let result: any;
-        switch (agentId) {
-          case 'atlas-agent-triage':
-            result = {
-              urgency: 'EMERGENT',
-              suggested_pathway: 'ED',
-              differential: [
-                { condition: 'Acute Myocardial Infarction', icd10: 'I21.9', confidence: 0.78 },
-                { condition: 'Unstable Angina', icd10: 'I20.0', confidence: 0.15 },
-              ],
-              red_flags: ['chest pain radiating to arm', 'diaphoresis'],
-              reasoning: 'Patient presents with chest pain symptoms requiring urgent evaluation',
-              confidence_score: 0.85,
-            };
-            session.metadata = session.metadata || {};
-            session.metadata.triage_result = result;
-            break;
-          case 'atlas-agent-referral':
-            result = {
-              specialist_type: 'Cardiology',
-              facility: 'St. Mary\'s Hospital',
-              urgency: 'URGENT',
-              appointment_scheduled: false,
-              wait_time_minutes: 15,
-              distance_miles: 4.2,
-              insurance_accepted: true,
-            };
-            session.metadata = session.metadata || {};
-            session.metadata.referral_details = result;
-            break;
-          case 'atlas-agent-meds':
-            result = {
-              interactions_found: true,
-              contraindications: ['Increased bleeding risk with anticoagulents'],
-              recommendations: ['Monitor for signs of bleeding', 'Hold anticoagulents until evaluated'],
-              current_medications: ['Warfarin', 'Lisinopril', 'Metformin'],
-            };
-            session.metadata = session.metadata || {};
-            session.metadata.medication_check = result;
-            break;
-          case 'atlas-agent-proxy':
-            result = {
-              patient_notified: true,
-              message_sent: 'Please proceed to St. Mary\'s Emergency Room immediately',
-              instructions: [
-                'Go to nearest emergency room',
-                'Bring current medications',
-                'Avoid driving yourself',
-              ],
-            };
-            session.metadata = session.metadata || {};
-            session.metadata.patient_instructions = result.instructions;
-            break;
-          default:
-            reject(new Error(`Unknown agent: ${agentId}`));
-            return;
-        }
-        resolve(result);
-      }, 50); // Simulate latency
-      signal.addEventListener('abort', () => {
-        clearTimeout(timeout);
-        reject(new Error('Aborted'));
-      });
-    });
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
   }
 
   private checkConditions(session: CareSession, step: WorkflowStep): boolean {
@@ -1322,45 +911,12 @@ class WorkflowOrchestrator {
     if (cond.consent_required && !session.consent_ref) return false;
     if (cond.symptoms_required) {
       const symptoms = session.metadata?.initial_symptoms || [];
-<<<<<<< HEAD
       const hasRequired = cond.symptoms_required.some(req => symptoms.some(s => s.toLowerCase().includes(req.toLowerCase())));
       if (!hasRequired) return false;
     }
     return true;
   }
 
-=======
-      const hasRequired = cond.symptoms_required.some(req =>
-        symptoms.some(s => s.toLowerCase().includes(req.toLowerCase()))
-      );
-      if (!hasRequired) return false;
-    }
-    // data_required could be checked here
-    return true;
-  }
-
-  private determineNextState(session: CareSession, step: WorkflowStep, result: any): CareSessionState {
-    // Simplified: based on current state and result
-    switch (session.state) {
-      case 'INTAKE':
-        return 'TRIAGE';
-      case 'TRIAGE':
-        return session.metadata?.triage_result?.urgency === 'EMERGENT' ? 'ROUTING' : 'COMPLETE';
-      case 'ROUTING':
-        // If we've done both referral and meds, complete; else continue
-        const hasReferral = session.metadata?.referral_details != null;
-        const hasMeds = session.metadata?.medication_check != null;
-        if (hasReferral && hasMeds) return 'COMPLETE';
-        if (hasReferral) return 'MEDS';
-        return 'ROUTING'; // stay in routing until referral done
-      case 'MEDS':
-        return 'COMPLETE';
-      default:
-        return 'COMPLETE';
-    }
-  }
-
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
   private isSessionComplete(session: CareSession): boolean {
     const triage = session.metadata?.triage_result;
     if (!triage) return false;
@@ -1380,10 +936,6 @@ class WorkflowOrchestrator {
   private async completeSession(session: CareSession, outcome: CoordinationResult['outcome']): Promise<void> {
     session.completed_at = new Date().toISOString();
     session.state = 'COMPLETE';
-<<<<<<< HEAD
-=======
-    // Add timeline event
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
     session.timeline.push({
       event_id: uuidv4(),
       timestamp: session.completed_at,
@@ -1457,7 +1009,6 @@ class WorkflowOrchestrator {
     return Math.max(0, Math.min(1, confidence));
   }
 
-<<<<<<< HEAD
   private determineSpecialty(differential: any[]): string {
     if (!differential?.length) return 'Primary Care';
     const condition = differential[0].condition?.toLowerCase() || '';
@@ -1500,8 +1051,6 @@ class WorkflowOrchestrator {
     }
   }
 
-=======
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
   private async handleError(session: CareSession, error: Error): Promise<void> {
     session.timeline.push({
       event_id: uuidv4(),
@@ -1519,16 +1068,11 @@ class WorkflowOrchestrator {
 
 // ==================== Main Coordinator ====================
 export class CareCoordinator {
-<<<<<<< HEAD
   private sessionRepo: SessionRepository;
-=======
-  private sessionManager: SessionManager;
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
   private metrics: MetricsCollector;
   private logger: EventLogger;
   private agentExecutor: AgentExecutor;
   private orchestrator: WorkflowOrchestrator;
-<<<<<<< HEAD
   private sharpFhirIntegration: SHARPFhirIntegration;
   private notificationService: NotificationService;
 
@@ -1676,102 +1220,10 @@ export class CareCoordinator {
     return this.metrics.getMetrics(agentId);
   }
 
-=======
-
-  constructor(private config: CoordinatorConfig = defaultConfig) {
-    this.sessionManager = new SessionManager();
-    this.metrics = new MetricsCollector();
-    this.logger = new EventLogger();
-    this.agentExecutor = new AgentExecutor(this.config, this.metrics, this.logger);
-    this.orchestrator = new WorkflowOrchestrator(this.config, this.agentExecutor, this.metrics, this.logger);
-  }
-
-  /**
-   * Starts a new care coordination session.
-   * @param request - The coordination request.
-   * @returns Result containing the coordination result or an error.
-   */
-  async coordinateCare(request: CoordinationRequest): Promise<Result<CoordinationResult>> {
-    try {
-      const validatedRequest = CoordinationRequestSchema.parse(request);
-      const session = this.sessionManager.createSession(validatedRequest);
-      // Add initial timeline event
-      await this.addTimelineEvent(session, {
-        event_id: uuidv4(),
-        timestamp: new Date().toISOString(),
-        event_type: 'SESSION_START',
-        agent: this.config.agentId,
-        description: `Care coordination session started for ${validatedRequest.trigger}`,
-        data: validatedRequest,
-      });
-      // Process workflow
-      const result = await this.orchestrator.process(session);
-      return result;
-    } catch (error) {
-      const err = error instanceof Error ? error : new Error(String(error));
-      return { ok: false, error: err };
-    }
-  }
-
-  /**
-   * Cancels an ongoing session.
-   * @param sessionId - The ID of the session to cancel.
-   * @returns true if cancelled, false if not found.
-   */
-  async cancelSession(sessionId: string): Promise<boolean> {
-    const result = await this.sessionManager.withSession(sessionId, async session => {
-      if (session.state === 'COMPLETE' || session.state === 'CANCELLED') {
-        return false;
-      }
-      session.state = 'CANCELLED';
-      session.completed_at = new Date().toISOString();
-      await this.addTimelineEvent(session, {
-        event_id: uuidv4(),
-        timestamp: session.completed_at,
-        event_type: 'SESSION_CANCELLED',
-        agent: this.config.agentId,
-        description: 'Session cancelled by user request',
-      });
-      return true;
-    });
-    return result.ok ? result.value : false;
-  }
-
-  /**
-   * Retrieves a session by ID.
-   */
-  getSession(sessionId: string): CareSession | undefined {
-    return this.sessionManager.getSession(sessionId);
-  }
-
-  /**
-   * Lists all active sessions.
-   */
-  listActiveSessions(): CareSession[] {
-    return this.sessionManager.getAllSessions().filter(s => s.state !== 'COMPLETE' && s.state !== 'CANCELLED');
-  }
-
-  /**
-   * Returns performance metrics.
-   */
-  getMetrics(agentId?: string): Metrics | Map<string, Metrics> {
-    return this.metrics.getMetrics(agentId);
-  }
-
-  /**
-   * Returns logged integration events.
-   */
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
   getIntegrationEvents(): IntegrationEvent[] {
     return this.logger.getEvents();
   }
 
-<<<<<<< HEAD
-=======
-  /**
-   * Returns agent information.
-   */
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
   getAgentInfo(): { id: string; name: string; version: string; capabilities: string[] } {
     return {
       id: this.config.agentId,
@@ -1786,15 +1238,11 @@ export class CareCoordinator {
         'retry_with_backoff',
         'concurrency_safety',
         'observability',
-<<<<<<< HEAD
         'notifications',
-=======
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
       ],
     };
   }
 
-<<<<<<< HEAD
   private createSession(request: CoordinationRequest): CareSession {
     const sessionId = uuidv4();
     const now = new Date().toISOString();
@@ -1820,10 +1268,5 @@ export class CareCoordinator {
     session.timeline.push(event);
     session.updated_at = event.timestamp;
     // No need to save here; caller will save
-=======
-  private async addTimelineEvent(session: CareSession, event: TimelineEvent): Promise<void> {
-    session.timeline.push(event);
-    session.updated_at = event.timestamp;
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
   }
 }

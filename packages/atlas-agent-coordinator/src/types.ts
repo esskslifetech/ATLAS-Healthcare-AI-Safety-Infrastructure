@@ -126,11 +126,8 @@ export const CareSessionSchema = z.object({
           medicalHistory: z.array(z.string()).optional(),
         })
         .optional(),
-<<<<<<< HEAD
       clinicalContext: z.any().optional(),
       sharpContext: z.any().optional(),
-=======
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
       triage_result: z
         .object({
           urgency: UrgencySchema,

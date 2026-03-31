@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 import { createHash, randomUUID } from 'node:crypto';
 
 describe('ATLAS Core Infrastructure Tests', () => {
@@ -218,10 +217,5 @@ describe('ATLAS Core Infrastructure Tests', () => {
         expect(errorResult.error).toBeInstanceOf(Error);
       }
     });
-=======
-describe('sample test', () => {
-  it('should pass', () => {
-    expect(1).toBe(1);
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
   });
 });

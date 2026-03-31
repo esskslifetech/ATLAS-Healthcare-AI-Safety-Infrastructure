@@ -197,7 +197,6 @@ class AuditStore {
       if (query.resource_id) filtered = filtered.filter(e => e.resource.id === query.resource_id);
       if (query.result) filtered = filtered.filter(e => e.result === query.result);
       if (query.start_date) {
-<<<<<<< HEAD
         filtered = filtered.filter(e => e.timestamp >= query.start_date!);
       }
       if (query.end_date) {
@@ -212,22 +211,6 @@ class AuditStore {
           return query.sort_order === 'desc' ? bTime - aTime : aTime - bTime;
         });
       }
-=======
-        const start = new Date(query.start_date);
-        filtered = filtered.filter(e => new Date(e.timestamp) >= start);
-      }
-      if (query.end_date) {
-        const end = new Date(query.end_date);
-        filtered = filtered.filter(e => new Date(e.timestamp) <= end);
-      }
-      if (query.purpose) filtered = filtered.filter(e => e.purpose === query.purpose);
-
-      filtered.sort((a, b) => {
-        const aTime = new Date(a.timestamp).getTime();
-        const bTime = new Date(b.timestamp).getTime();
-        return query.sort_order === 'desc' ? bTime - aTime : aTime - bTime;
-      });
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
 
       const offset = query.offset || 0;
       const limit = query.limit ?? this.defaultPageSize();
@@ -240,7 +223,6 @@ class AuditStore {
   async getStatistics(query: AuditQuery): Promise<AuditStatistics> {
     const release = await this.lock.acquire();
     try {
-<<<<<<< HEAD
       // Use internal query logic to avoid deadlock
       let filtered = [...this.events];
 
@@ -260,11 +242,6 @@ class AuditStore {
 
       const stats = {
         total_events: filtered.length,
-=======
-      const events = await this.queryEvents(query);
-      const stats = {
-        total_events: events.length,
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
         events_by_type: {} as Record<string, number>,
         events_by_action: {} as Record<string, number>,
         events_by_actor: {} as Record<string, number>,
@@ -279,11 +256,7 @@ class AuditStore {
         access_denied_rate: 0,
       };
 
-<<<<<<< HEAD
       for (const e of filtered) {
-=======
-      for (const e of events) {
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
         stats.events_by_type[e.type] = (stats.events_by_type[e.type] || 0) + 1;
         stats.events_by_action[e.action] = (stats.events_by_action[e.action] || 0) + 1;
         stats.events_by_actor[e.actor.id] = (stats.events_by_actor[e.actor.id] || 0) + 1;
@@ -296,21 +269,12 @@ class AuditStore {
         stats.unique_actors.add(e.actor.id);
       }
 
-<<<<<<< HEAD
       if (filtered.length) {
         const times = filtered.map(e => new Date(e.timestamp).getTime());
         stats.date_range.start = new Date(Math.min(...times)).toISOString();
         stats.date_range.end = new Date(Math.max(...times)).toISOString();
         stats.error_rate = (stats.events_by_result['FAILURE'] || 0) / filtered.length;
         stats.access_denied_rate = (stats.events_by_action['ACCESS_DENIED'] || 0) / filtered.length;
-=======
-      if (events.length) {
-        const times = events.map(e => new Date(e.timestamp).getTime());
-        stats.date_range.start = new Date(Math.min(...times)).toISOString();
-        stats.date_range.end = new Date(Math.max(...times)).toISOString();
-        stats.error_rate = (stats.events_by_result['FAILURE'] || 0) / events.length;
-        stats.access_denied_rate = (stats.events_by_action['ACCESS_DENIED'] || 0) / events.length;
->>>>>>> 0f764913 (🏥 Initial commit: ATLAS Verifiable Healthcare AI Infrastructure)
       }
 
       return {
