@@ -1,0 +1,69 @@
+{
+  "name": "atlas-health-agents",
+  "version": "1.0.0",
+  "description": "🏥 ATLAS — Verifiable Healthcare AI Infrastructure: Clinical AI Safety Infrastructure with Cryptographic Audit Trails and Patient Consent Enforcement",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "npm run build && node dist/index.js",
+    "test": "jest",
+    "lint": "eslint 'src/**/*.ts' --ignore-pattern 'dist'",
+    "demo": "npm run build && node dist/demo/maria-scenario.js"
+  },
+  "keywords": [
+    "healthcare",
+    "fhir",
+    "ai-agents",
+    "hipaa",
+    "care-coordination",
+    "smart-on-fhir"
+  ],
+  "author": {
+    "name": "Kanishk Soni",
+    "url": "https://github.com/esskslifetech"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/esskslifetech/ATLAS-Healthcare-AI-Safety-Infrastructure.git"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "async-mutex": "^0.5.0",
+    "axios": "^1.6.2",
+    "cors": "^2.8.6",
+    "crypto": "^1.0.1",
+    "express": "^5.2.1",
+    "fhirclient": "^2.5.2",
+    "openai": "^4.20.1",
+    "uuid": "^9.0.1",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.8",
+    "@types/node": "^20.10.0",
+    "@types/uuid": "^9.0.7",
+    "@typescript-eslint/eslint-plugin": "^6.13.1",
+    "@typescript-eslint/parser": "^6.13.1",
+    "eslint": "^8.54.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "ts-node": "^10.9.1",
+    "typescript": "^5.3.2"
+  },
+  "workspaces": [
+    "packages/atlas-ai-core",
+    "packages/atlas-a2a-protocol",
+    "packages/atlas-mcp-consent",
+    "packages/atlas-mcp-audit",
+    "packages/atlas-std-fhir",
+    "packages/atlas-tool-consent",
+    "packages/atlas-tool-identity",
+    "packages/atlas-tool-audit",
+    "packages/atlas-agent-coordinator",
+    "packages/atlas-agent-triage",
+    "packages/atlas-agent-proxy"
+  ]
+}
